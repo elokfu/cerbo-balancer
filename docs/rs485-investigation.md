@@ -69,9 +69,13 @@ The following map was supplied for investigation. It is retained as an
 The supplied map does not specify the required Modbus function code, parity,
 CRC convention, address base, or whether it applies to Dyness B3. It also
 resembles generic/Pace-style battery maps rather than a register table in the
-official B3 manual. Consequently, polling all 255 addresses with guessed
-framing would not be a validated test and is intentionally not performed while
-Venus serial autodetection owns `/dev/ttyUSB0`.
+official B3 manual. The repository now contains a narrow read-only probe that
+defaults to 9600 8N1 and also permits an explicitly selected 115200 8N1 retry.
+It tries functions 03 and 04 and the first candidate block at address 1 first.
+If there is no valid response, it scans legal Modbus addresses 2–247 and stops
+at the first validated response, then reads the remaining candidate blocks from
+that address. It must only be run after the Cerbo serial autodetection services
+are stopped and with a documented rollback.
 
 Reference: [Dyness B3 User Manual](https://dyness.com/Public/Uploads/uploadfile/files/20241023/B3UserManualEN.pdf).
 
@@ -84,6 +88,24 @@ the exact B3 protocol or a documented compatible inverter protocol.
 
 The direct-CAN reader remains receive-only. DVCC, `can1`, battery DIP switches,
 and charger settings remain unchanged.
+
+## Live probe result after polarity reversal
+
+The temporary Venus serial detectors were stopped and the adapter was tested
+exclusively at both documented rates. For each rate, address 1 was tested
+first; because it returned no bytes, addresses 2–247 were then tested. Both
+Modbus functions 03 and 04 were used for the candidate aggregate block at
+registers 0–3.
+
+```text
+9600 8N1: 0 valid responses from addresses 1–247
+115200 8N1: 0 valid responses from addresses 1–247
+```
+
+No response bytes, exception frames, or CRC-valid frames were received after
+the A/B polarity reversal. The remaining candidate blocks were therefore not
+requested. The temporary serial probe was removed, the Cerbo serial-starter
+link was recreated, and the Cerbo resumed ownership of `/dev/ttyUSB0`.
 
 ## Next permitted test
 
