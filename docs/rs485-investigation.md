@@ -123,6 +123,14 @@ The serial-starter link is intentionally left disabled until the next Cerbo
 reset, at the user's request. No battery write, wake, configuration, CAN,
 DVCC, or charger command was sent.
 
+## Repeat 9600 probe
+
+At the user's request, Cerbo serial access was disabled again and the complete
+9600 8N1 read-only scan was repeated. Address 1 was tested first, followed by
+addresses 2–247 with functions 03 and 04. The second full run again completed
+with 494 requests and no response bytes or valid frames. The serial-starter
+link remains disabled until the next Cerbo reset.
+
 ## Next permitted test
 
 Only after a documented protocol is available may a controlled client send one
