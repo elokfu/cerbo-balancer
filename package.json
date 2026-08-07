@@ -4,8 +4,8 @@
   "private": true,
   "description": "Direct-CAN-first Dyness battery equalization shadow controller for Cerbo GX",
   "scripts": {
-    "test": "node --test",
+    "test": "node --test && python -m unittest discover -s test -p *_test.py",
     "build-flow": "node scripts/build-flow.js",
-    "check": "node scripts/build-flow.js --check && node --test"
+    "check": "node scripts/build-flow.js --check && node --test && python -m unittest discover -s test -p *_test.py"
   }
 }

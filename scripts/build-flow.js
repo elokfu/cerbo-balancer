@@ -11,8 +11,23 @@ const controller = fs.readFileSync(path.join(root, 'src', 'controller.js'), 'utf
 const help = fs.readFileSync(path.join(root, 'docs', 'dashboard-help.md'), 'utf8')
 const template = fs.readFileSync(templatePath, 'utf8')
 const flow = JSON.parse(template
-  .replace('__CONTROLLER_SOURCE__', JSON.stringify(controller).slice(1, -1))
+  .replaceAll('effective_cells', 'effectiveCells')
+  .replaceAll('directly_reported_cell_sum', 'directlyReportedCellSum')
+  .replaceAll('reconstructed_cell_sum', 'reconstructedCellSum')
+  .replaceAll('reconstructed_voltage_delta_mv', 'reconstructedVoltageDeltaMv')
+  .replaceAll('validation_errors', 'validationErrors')
+  .replace("intent ? { topic: 'shadow_command', payload: JSON.stringify(intent) }", "intent ? { topic: 'controller_command', payload: JSON.stringify({ version: Date.now(), timestamp: Date.now(), mode: controller.getState().mode, requestedVoltage: intent.value, requestedCurrent: intent.command && intent.command.chargeCurrentCommand }) }" )
   .replace('__DASHBOARD_HELP__', JSON.stringify(help).slice(1, -1)))
+
+const controllerNode = flow.find(node => node.id === 'bal-controller')
+if (!controllerNode) throw new Error('bal-controller node is missing from the flow template')
+controllerNode.func = controllerNode.func.replace(
+  'const source = "__CONTROLLER_SOURCE__";',
+  `const source = Buffer.from(${JSON.stringify(Buffer.from(controller, 'utf8').toString('base64'))}, 'base64').toString('utf8');`
+)
+const rs485ServiceNode = flow.find(node => node.id === 'bal-rs485-service')
+if (!rs485ServiceNode) throw new Error('bal-rs485-service node is missing from the flow template')
+rs485ServiceNode.command += ' --no-serial-starter-stop'
 
 const rendered = `${JSON.stringify(flow, null, 2)}\n`
 if (process.argv.includes('--check')) {

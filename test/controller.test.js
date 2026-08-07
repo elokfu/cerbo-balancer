@@ -21,6 +21,7 @@ const telemetry = () => ({
   dcl: 100,
   cvl: 56.8,
   bmsStatus: 'OK'
+  ,batteries: [{ temperatures: [25] }]
 })
 
 assert.equal(validateConfig({}).valid, false === false)
@@ -53,3 +54,5 @@ assert.equal(controller.getStatus().telemetry.ccl, 0)
 
 const configured = validateConfig({ kp: 2, ki: 0.01 })
 assert.equal(configured.valid, true)
+const thermalCommand = controller.handle({ type: 'telemetry', telemetry: telemetry(), timestamp: clock })
+assert.equal(thermalCommand.find(action => action.type === 'voltage_intent').command.chargeCurrentCommand, 0)

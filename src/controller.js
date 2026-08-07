@@ -31,11 +31,35 @@ const DEFAULT_CONFIG = Object.freeze({
   kp: null,
   ki: null,
   kff: 16,
-  maxIntegralTerm: 2.0
+  maxIntegralTerm: 2.0,
+  requestedChargeCurrent: 100
 })
 
 function finite (value) {
   return typeof value === 'number' && Number.isFinite(value)
+}
+
+function pointFactor (value, points) {
+  if (!finite(value)) return 0
+  if (value <= points[0][0]) return points[0][1]
+  for (let index = 1; index < points.length; index++) {
+    const [leftValue, leftFactor] = points[index - 1]
+    const [rightValue, rightFactor] = points[index]
+    if (value <= rightValue) {
+      const fraction = (value - leftValue) / (rightValue - leftValue)
+      return leftFactor + fraction * (rightFactor - leftFactor)
+    }
+  }
+  return points[points.length - 1][1]
+}
+
+function thermalFactor (telemetry) {
+  const batteries = telemetry && Array.isArray(telemetry.batteries) ? telemetry.batteries : []
+  const temperatures = batteries.flatMap(battery => Array.isArray(battery.temperatures) ? battery.temperatures : [])
+  if (!temperatures.length) return 0
+  const cold = pointFactor(Math.min(...temperatures), [[0, 0], [5, 0.25], [10, 1]])
+  const hot = pointFactor(Math.max(...temperatures), [[45, 1], [50, 0.5], [55, 0]])
+  return Math.max(0, Math.min(1, cold, hot))
 }
 
 function emptyState () {
@@ -65,7 +89,8 @@ function validateConfig (candidate = {}) {
     'balanceCompleteSpread', 'equalizationEvaluationMinVmax',
     'equalizationStartPersistenceMs', 'balanceConfirmationMs', 'warningCellVoltage',
     'softwareEmergencyCellVoltage', 'dynessMaximumCellVoltage', 'telemetryStaleMs',
-    'maxVoltageIncreaseRatePerMin', 'maxVoltageDecreaseRatePerMin', 'kff', 'maxIntegralTerm'
+    'maxVoltageIncreaseRatePerMin', 'maxVoltageDecreaseRatePerMin', 'kff', 'maxIntegralTerm',
+    'requestedChargeCurrent'
   ]
   for (const field of positive) if (!finite(config[field]) || config[field] <= 0) errors.push(`${field} must be positive`)
   if (!(config.balanceCompleteSpread < config.equalizationStartSpread)) errors.push('completion spread must be below start spread')
@@ -133,6 +158,9 @@ function createBalancerController (options = {}) {
     let raw = baseline
     let highCellOverride = null
     let antiWindup = false
+    const heatFactor = thermalFactor(t)
+    const bmsCcl = t && finite(t.ccl) ? Math.max(0, t.ccl) : 0
+    const chargeCurrentCommand = Math.min(config.requestedChargeCurrent, bmsCcl) * heatFactor
 
     if (status.valid && state.state === STATES.EQUALIZING && finite(config.kp) && finite(config.ki)) {
       const dt = state.lastEvaluationAt === null ? 0 : Math.max(0, (timestamp - state.lastEvaluationAt) / 1000)
@@ -181,7 +209,9 @@ function createBalancerController (options = {}) {
       highCellOverride,
       outputSaturated: limited !== raw,
       antiWindup,
-      bmsCvl
+      bmsCvl,
+      thermalFactor: heatFactor,
+      chargeCurrentCommand
     }
   }
 

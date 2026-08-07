@@ -20,7 +20,10 @@ The Cerbo’s serial-starter automatically creates several one-shot hardware
 detectors for `/dev/ttyUSB0`, including generic Modbus, FZ Sonick, and IMT
 RS485 services. Their logs show generic baud scans and no responses. These
 scans are not a validated Dyness exchange and are not used as decoder input.
-No additional balancer serial client was started.
+The deployed balancer now owns the adapter after the generic serial-starter
+clients are stopped. The generic `dbus-fzsonick`, `dbus-imt-si-rs485tc`, and
+`dbus-modbus-client` probes were confirmed as competing clients and their
+serial-starter ownership link was removed before deployment.
 
 The existing CAN path remains healthy:
 
@@ -81,13 +84,21 @@ Reference: [Dyness B3 User Manual](https://dyness.com/Public/Uploads/uploadfile/
 
 ## Decision
 
-RS485 telemetry is currently **unavailable**. The balancer must not interpret
-generic Modbus responses, plausible numbers, or unmatched bytes as battery or
-cell data. No RS485 request implementation is included until Dyness provides
-the exact B3 protocol or a documented compatible inverter protocol.
+The user-provided Pylon-compatible ASCII protocol was validated live at
+115200 8N1. Battery addresses `0x02` and `0x03` returned repeatable CID2
+`0x42` telemetry. The service validates the frame checksum, address, length,
+cell count, cell ranges, and reconstructed cell sum before publishing data.
+CID2 `0x61` is retained only for system voltage/SOC, and CID2 `0x63` supplies
+limits/status. No candidate Modbus register map is used.
+
+The deployed service performs one discovery scan over addresses 2–16 at
+startup, polls only the responding addresses thereafter, and rediscoveries
+every 60 seconds. If any discovered battery disappears, the complete battery
+set is invalidated and no partial current sum is published.
 
 The direct-CAN reader remains receive-only. DVCC, `can1`, battery DIP switches,
-and charger settings remain unchanged.
+and charger settings remain unchanged. The virtual BMS remains a TEST/shadow
+service and has not been selected as the active DVCC battery service.
 
 ## Live probe result after polarity reversal
 
@@ -147,9 +158,24 @@ serial-starter link remains disabled until the next Cerbo reset.
 
 Reference: [Pylontech RS485 communication protocol](https://www.photovoltaikforum.com/core/file-download/75745/).
 
-## Next permitted test
+## Live RS485 deployment result
 
-Only after a documented protocol is available may a controlled client send one
-read-only request at a time with confirmed baud, parity, address, function,
-register, and CRC. The exchange must be captured and repeatable. No write,
-wake, configuration, or control frame is permitted.
+The service returned valid telemetry including:
+
+```text
+system voltage: 53.79–53.85 V
+SOC: 96 %
+address 02: 54.50 V, +0.3 A; calculated cell 16: 3.382 V
+address 03: 53.07 V, -4.6 A; calculated cell 16: 3.306 V
+Vmin/Vmax: 3.306/3.528 V
+CCL/DCL: 56.0 A/-397.6 A
+temperature range: 25.7–29.2 deg C
+```
+
+The virtual D-Bus service `com.victronenergy.battery.rs485_dyness` is
+available as DeviceInstance 100. D-Bus readback verified SOC, voltage, and
+current. The maintenance dashboard is available at
+`/dashboard/balancer/maintenance`.
+
+No write, wake, configuration, charge-voltage, or charge-current control
+frame is implemented by the RS485 service.
