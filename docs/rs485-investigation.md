@@ -107,6 +107,22 @@ the A/B polarity reversal. The remaining candidate blocks were therefore not
 requested. The temporary serial probe was removed, the Cerbo serial-starter
 link was recreated, and the Cerbo resumed ownership of `/dev/ttyUSB0`.
 
+## Live probe after user DIP change
+
+After the user changed the B3 DIP setting, the read-only probe was run again at
+9600 8N1. Address 1 was tested first, followed by legal addresses 2–247, using
+Modbus functions 03 and 04 against registers 0–3. The run completed with 494
+requests and no response bytes:
+
+```text
+9600 8N1 after DIP change: 0 valid responses from addresses 1–247
+494 short responses; no exception frames or CRC-valid frames
+```
+
+The serial-starter link is intentionally left disabled until the next Cerbo
+reset, at the user's request. No battery write, wake, configuration, CAN,
+DVCC, or charger command was sent.
+
 ## Next permitted test
 
 Only after a documented protocol is available may a controlled client send one
