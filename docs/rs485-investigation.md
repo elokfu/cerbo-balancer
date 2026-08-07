@@ -175,7 +175,7 @@ temperature range: 25.7–29.2 deg C
 The virtual D-Bus service `com.victronenergy.battery.rs485_dyness` is
 available as DeviceInstance 100. D-Bus readback verified SOC, voltage, and
 current. The maintenance dashboard is available at
-`/dashboard/balancer/maintenance`.
+`/dashboard/balancer-maintenance`.
 
 No write, wake, configuration, charge-voltage, or charge-current control
 frame is implemented by the RS485 service.

@@ -29,7 +29,7 @@ npm run check
 The generated flow is `flow/cerbo-balancer-controller.json`. Import it by
 merging it with the existing Node-RED flow, retaining the existing
 `victron-client` configuration node. Dashboards are available at
-`/dashboard/balancer` and `/dashboard/balancer/maintenance`. The maintenance
+`/dashboard/balancer` and `/dashboard/balancer-maintenance`. The maintenance
 page refreshes every five seconds and shows system SOC/voltage, limits,
 per-battery voltage/current, all cells and their source, and temperatures.
 

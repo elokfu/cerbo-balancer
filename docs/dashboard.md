@@ -1,7 +1,7 @@
 # Dashboard
 
 The controller page is `/dashboard/balancer`. The maintenance page is
-`/dashboard/balancer/maintenance` and refreshes its telemetry snapshot every
+`/dashboard/balancer-maintenance` and refreshes its telemetry snapshot every
 five seconds while the RS485 poller runs every two seconds.
 
 The maintenance view exposes CID2 `0x61` system voltage/SOC, CID2 `0x63`
