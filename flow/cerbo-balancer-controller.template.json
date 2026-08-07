@@ -342,7 +342,7 @@
     "order": 1,
     "width": 12,
     "height": 15,
-    "content": "{{msg.payload}}",
+    "content": "{{ msg?.payload || 'Waiting for RS485 telemetry...' }}",
     "className": "",
     "x": 730,
     "y": 700,

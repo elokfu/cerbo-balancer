@@ -4,7 +4,7 @@
     "type": "tab",
     "label": "Cerbo Dyness Balancer",
     "disabled": false,
-    "info": "TEST_MODE=true. Direct-CAN-first passive telemetry and shadow controller. RS485 is unavailable until its protocol is validated. State file: /data/home/nodered/cerbo-balancer-state.json.",
+    "info": "TEST_MODE=true. Read-only Dyness RS485 telemetry and shadow controller. DVCC and charger settings are unchanged. State file: /data/home/nodered/cerbo-balancer-state.json.",
     "env": []
   },
   {
@@ -436,7 +436,7 @@
     "order": 1,
     "width": 12,
     "height": 15,
-    "content": "{{msg.payload}}",
+    "content": "{{ msg?.payload || 'Waiting for RS485 telemetry...' }}",
     "className": "",
     "x": 730,
     "y": 700,
