@@ -1,0 +1,11 @@
+{
+  "name": "cerbo-balancer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Direct-CAN-first Dyness battery equalization shadow controller for Cerbo GX",
+  "scripts": {
+    "test": "node --test",
+    "build-flow": "node scripts/build-flow.js",
+    "check": "node scripts/build-flow.js --check && node --test"
+  }
+}
