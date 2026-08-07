@@ -131,6 +131,22 @@ addresses 2–247 with functions 03 and 04. The second full run again completed
 with 494 requests and no response bytes or valid frames. The serial-starter
 link remains disabled until the next Cerbo reset.
 
+## Pylontech-compatible ASCII probe
+
+The binary Modbus tests were followed by a separate Pylontech-compatible ASCII
+probe at 9600 8N1. This is a different protocol: it uses `~`-framed ASCII
+messages, Pylontech addresses 1–254, and the documented read commands `4F`
+(protocol version), `51` (manufacturer), `42` (analog data), and `44` (alarm
+data). The probe validates the ASCII length field, two's-complement checksum,
+address, CID1, and response return code. It contains no write or control
+commands.
+
+All 254 discovery requests completed with no response bytes and no valid
+Pylontech frame. The temporary probe was removed afterward, and the
+serial-starter link remains disabled until the next Cerbo reset.
+
+Reference: [Pylontech RS485 communication protocol](https://www.photovoltaikforum.com/core/file-download/75745/).
+
 ## Next permitted test
 
 Only after a documented protocol is available may a controlled client send one
