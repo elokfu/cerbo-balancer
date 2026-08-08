@@ -44,7 +44,7 @@ const valid = {
     maximumMosfetTemperature61: 28.0,
     maximumMosfetTemperatureId61: 258,
     minimumMosfetTemperature61: 26.0,
-    minimumMosfetTemperatureId61: 655,
+    minimumMosfetTemperatureId61: 514,
     averageBmsTemperature61: 34.2,
     maximumBmsTemperature61: 34.3,
     maximumBmsTemperatureId61: 258,
@@ -88,10 +88,10 @@ assert.equal(live.system.cellSummary.minimumId, 'Battery 2 · Cell 11')
 assert.equal(live.system.cellSummary.maximumRawId, '0x0702')
 assert.equal(live.system.cellSummary.minimumRawId, '0x0B02')
 assert.equal(live.system.cellSummary.spread, '0.182')
-assert.equal(live.system.cellTemperature.maximumId, '1026')
-assert.equal(live.system.mosfetTemperature.minimumId, '655')
+assert.equal(live.system.cellTemperature.maximumId, 'Battery 2 · Sensor 04')
+assert.equal(live.system.mosfetTemperature.minimumId, 'Battery 2 · Sensor 02')
 assert.equal(live.system.bmsTemperature.average, '34.2')
-assert.equal(live.system.bmsTemperature.maximumId, '258')
+assert.equal(live.system.bmsTemperature.maximumId, 'Battery 2 · Sensor 01')
 assert.equal(live.system.bmsTemperature.single, null)
 const packedCellId = format({
   ...valid,
@@ -109,7 +109,7 @@ const singleBms = format({
   }
 }, null, 100000)
 assert.equal(singleBms.system.bmsTemperature.single.value, '34.2')
-assert.equal(singleBms.system.bmsTemperature.single.id, '258')
+assert.equal(singleBms.system.bmsTemperature.single.id, 'Battery 2 · Sensor 01')
 
 const status44 = {
   available: true,

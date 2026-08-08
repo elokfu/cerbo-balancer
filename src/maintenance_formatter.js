@@ -8,14 +8,16 @@ const temperature = (value) => bounded(value, -40, 100, 1)
 const identifier = (value, metric) => metric !== '—' && typeof value === 'number' && Number.isInteger(value) && value >= 0 && value !== 65535 ? String(value) : '—'
 const byteHex = (value) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 255 ? `0x${value.toString(16).toUpperCase().padStart(2, '0')}` : '—'
 const wordHex = (value) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 65535 ? `0x${value.toString(16).toUpperCase().padStart(4, '0')}` : '—'
-const cellLocation = (value, metric) => {
+const packedLocation = (value, metric, label) => {
     if (metric === '—' || typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 65535 || value === 65535) return '—'
     const packed = value.toString(16).toUpperCase().padStart(4, '0')
     const cellByte = packed.slice(0, 2)
-    const cell = /^\d{2}$/.test(cellByte) ? Number(cellByte) : Number.parseInt(cellByte, 16)
+    const channel = /^\d{2}$/.test(cellByte) ? Number(cellByte) : Number.parseInt(cellByte, 16)
     const battery = Number.parseInt(packed.slice(2), 16)
-    return cell > 0 && cell <= 16 && battery >= 0 ? `Battery ${battery} · Cell ${String(cell).padStart(2, '0')}` : '—'
+    return channel > 0 && battery >= 0 ? `Battery ${battery} · ${label} ${String(channel).padStart(2, '0')}` : '—'
 }
+const cellLocation = (value, metric) => packedLocation(value, metric, 'Cell')
+const sensorLocation = (value, metric) => packedLocation(value, metric, 'Sensor')
 const onOff = (value) => typeof value === 'boolean' ? (value ? 'ON' : 'OFF') : '—'
 const noneOr = (values, fallback = 'None') => Array.isArray(values) && values.length ? values.join(', ') : fallback
 const status44View = (status) => {
@@ -103,8 +105,8 @@ const systemMinimumCellVoltage = bounded(system.minimumCellVoltage61, 2, 4.5)
 const bmsAverageTemperature = temperature(system.averageBmsTemperature61)
 const bmsMaximumTemperature = temperature(system.maximumBmsTemperature61)
 const bmsMinimumTemperature = temperature(system.minimumBmsTemperature61)
-const bmsMaximumId = identifier(system.maximumBmsTemperatureId61, bmsMaximumTemperature)
-const bmsMinimumId = identifier(system.minimumBmsTemperatureId61, bmsMinimumTemperature)
+const bmsMaximumId = sensorLocation(system.maximumBmsTemperatureId61, bmsMaximumTemperature)
+const bmsMinimumId = sensorLocation(system.minimumBmsTemperatureId61, bmsMinimumTemperature)
 const bmsSingleTemperature = bmsMaximumTemperature !== '—' && bmsMaximumTemperature === bmsMinimumTemperature && bmsMaximumId === bmsMinimumId
     ? { value: bmsMaximumTemperature, id: bmsMaximumId }
     : null
@@ -171,23 +173,29 @@ msg.payload = {
         cellTemperature: {
             average: temperature(system.averageCellTemperature61),
             maximum: temperature(system.maximumCellTemperature61),
-            maximumId: identifier(system.maximumCellTemperatureId61, temperature(system.maximumCellTemperature61)),
+            maximumId: sensorLocation(system.maximumCellTemperatureId61, temperature(system.maximumCellTemperature61)),
+            maximumRawId: wordHex(system.maximumCellTemperatureId61),
             minimum: temperature(system.minimumCellTemperature61),
-            minimumId: identifier(system.minimumCellTemperatureId61, temperature(system.minimumCellTemperature61))
+            minimumId: sensorLocation(system.minimumCellTemperatureId61, temperature(system.minimumCellTemperature61)),
+            minimumRawId: wordHex(system.minimumCellTemperatureId61)
         },
         mosfetTemperature: {
             average: temperature(system.averageMosfetTemperature61),
             maximum: temperature(system.maximumMosfetTemperature61),
-            maximumId: identifier(system.maximumMosfetTemperatureId61, temperature(system.maximumMosfetTemperature61)),
+            maximumId: sensorLocation(system.maximumMosfetTemperatureId61, temperature(system.maximumMosfetTemperature61)),
+            maximumRawId: wordHex(system.maximumMosfetTemperatureId61),
             minimum: temperature(system.minimumMosfetTemperature61),
-            minimumId: identifier(system.minimumMosfetTemperatureId61, temperature(system.minimumMosfetTemperature61))
+            minimumId: sensorLocation(system.minimumMosfetTemperatureId61, temperature(system.minimumMosfetTemperature61)),
+            minimumRawId: wordHex(system.minimumMosfetTemperatureId61)
         },
         bmsTemperature: {
             average: bmsAverageTemperature,
             maximum: bmsMaximumTemperature,
             maximumId: bmsMaximumId,
+            maximumRawId: wordHex(system.maximumBmsTemperatureId61),
             minimum: bmsMinimumTemperature,
             minimumId: bmsMinimumId,
+            minimumRawId: wordHex(system.minimumBmsTemperatureId61),
             single: bmsSingleTemperature
         }
     },

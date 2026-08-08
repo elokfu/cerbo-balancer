@@ -17,9 +17,12 @@ The CID2 `0x61` System Summary groups electrical values, cycle/SOH health,
 cell extrema and IDs, cell temperatures, MOSFET temperatures, and BMS
 temperatures. IDs are shown beside valid measurements; trailing hex remains
 available only in raw telemetry and logs.
-CID2 `0x61` cell-location IDs are displayed as `Battery N · Cell NN` using
-the first byte as the cell number and the second byte as the battery number;
-the raw packed hexadecimal ID remains available in the formatted telemetry.
+All displayed CID2 `0x61` location IDs are decoded as `Battery N · Channel NN`
+using the first byte as the channel/cell number and the second byte as the
+battery number. Cell locations use `Cell NN`; temperature locations use
+`Sensor NN`. The raw packed hexadecimal ID remains available in formatted
+telemetry. The MOSFET temperature summary intentionally shows only average
+and maximum values.
 Unphysical CID2 `0x61` sentinel values such as `0xFFFF` temperatures are
 displayed as `—` and are not used for control.
 It also shows active addresses, pending-removal batteries, missed-scan counts,
