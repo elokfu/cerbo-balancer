@@ -11,6 +11,7 @@ from dyness_rs485_protocol import (  # noqa: E402
     parse_system_61,
     parse_limits,
     parse_pack_telemetry,
+    parse_status_44,
     parse_system_soc,
     parse_system_voltage,
     request,
@@ -96,6 +97,29 @@ class DynessProtocolTests(unittest.TestCase):
         self.assertTrue(status["fullCharge"])
         self.assertEqual(status["unknownReservedBits"], 0x0F)
         self.assertEqual(len(status["active"]), 4)
+
+    def test_status44_decodes_full_register_set(self):
+        # Flag/address, no variable alarm arrays, three alarm bytes, Status1-5.
+        info = "00020000000000F70FE98140"
+        parsed = parse_status_44(response(2, 0x44, info), 2).as_dict()
+
+        self.assertEqual(parsed["status1"]["raw"], 0xF7)
+        self.assertEqual(len(parsed["status1"]["active"]), 7)
+        self.assertEqual(parsed["status2"]["raw"], 0x0F)
+        self.assertTrue(parsed["status2"]["chargeMosfet"])
+        self.assertTrue(parsed["status2"]["dischargeMosfet"])
+        self.assertTrue(parsed["status2"]["modulePowerActive"])
+        self.assertEqual(parsed["status3"]["raw"], 0xE9)
+        self.assertTrue(parsed["status3"]["effectiveCharging"])
+        self.assertTrue(parsed["status3"]["effectiveDischarging"])
+        self.assertTrue(parsed["status3"]["fullyCharged"])
+        self.assertTrue(parsed["status3"]["buzzerActive"])
+        self.assertEqual(parsed["status4"]["cellFaults"], [1, 8])
+        self.assertEqual(parsed["status5"]["cellFaults"], [15])
+
+    def test_status44_rejects_truncated_status_block(self):
+        with self.assertRaisesRegex(ValueError, "truncated CID2=44"):
+            parse_status_44(response(2, 0x44, "00020000000000"), 2)
 
     def test_non_ascii_frame_is_rejected_before_text_parsing(self):
         valid = response(2, 0x61, "D00000005A").encode("ascii")

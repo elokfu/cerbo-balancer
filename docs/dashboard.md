@@ -8,6 +8,11 @@ The maintenance view exposes CID2 `0x61` system voltage/SOC and validated BMS
 temperature range, CID2 `0x63` limits and permission/state bits, responding addresses, per-battery voltage and signed
 current, per-battery and all-pack cell spread, cell voltages, voltage sums and
 deltas, and every temperature sensor with min/max/average and interpretation.
+Each battery also has a compact CID2 `0x44` status row showing MOSFET,
+module-power, effective charge/discharge, protection, and alarm state. The
+raw Status1–Status5 registers and complete protection, alarm, cell-fault, and
+reserved-bit details are available under the collapsed `Status details`
+section, keeping the normal view compact.
 The CID2 `0x61` System Summary groups electrical values, cycle/SOH health,
 cell extrema and IDs, cell temperatures, MOSFET temperatures, and BMS
 temperatures. IDs are shown beside valid measurements; trailing hex remains

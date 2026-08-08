@@ -102,6 +102,57 @@ const singleBms = format({
 }, null, 100000)
 assert.equal(singleBms.system.bmsTemperature.single.value, '34.2')
 assert.equal(singleBms.system.bmsTemperature.single.id, '258')
+
+const status44 = {
+  available: true,
+  timestamp: 100000,
+  status1: { raw: 0, active: [], reserved: { bits: 0, hex: '0x00' } },
+  status2: { raw: 15, prechargeMosfet: true, chargeMosfet: true, dischargeMosfet: true, modulePowerActive: true, reserved: { bits: 0, hex: '0x00' } },
+  status3: { raw: 201, effectiveCharging: true, effectiveDischarging: true, heaterActive: false, fullyCharged: true, buzzerActive: true, reserved: { bits: 0, hex: '0x00' } },
+  status4: { raw: 0, cellFaults: [] },
+  status5: { raw: 0, cellFaults: [] },
+  alarms: { cell: [], temperature: [], chargeCurrent: 0, moduleVoltage: 0, dischargeCurrent: 0 }
+}
+const statusLive = format({
+  ...valid,
+  batteries: [{ address: 2, valid: true, voltage: 54.49, current: 0.1, effectiveCells: [], temperatures: [], status44 }]
+}, null, 100000)
+assert.equal(statusLive.batteries[0].status44.state, 'OK')
+assert.equal(statusLive.batteries[0].status44.stateClass, 'good')
+assert.equal(statusLive.batteries[0].status44.raw, 'S1 0x00 · S2 0x0F · S3 0xC9 · S4 0x00 · S5 0x00')
+assert.equal(statusLive.batteries[0].status44.chips[0].value, 'ON')
+assert.equal(statusLive.batteries[0].status44.protection, 'None')
+assert.equal(statusLive.batteries[0].status44.cellFaults, 'Cells 1–8: None · Cells 9–16: None')
+
+const statusWarn = format({
+  ...valid,
+  batteries: [{
+    address: 2,
+    valid: true,
+    voltage: 54.49,
+    current: 0.1,
+    effectiveCells: [],
+    temperatures: [],
+    status44: {
+      ...status44,
+      status1: { raw: 1, active: [{ description: 'over-voltage protection' }], reserved: { bits: 0, hex: '0x00' } },
+      status4: { raw: 1, cellFaults: [1] },
+      alarms: { cell: [2], temperature: [], chargeCurrent: 0, moduleVoltage: 0, dischargeCurrent: 0 }
+    }
+  }]
+}, null, 100000)
+assert.equal(statusWarn.batteries[0].status44.state, 'WARN')
+assert.equal(statusWarn.batteries[0].status44.stateClass, 'bad')
+assert.equal(statusWarn.batteries[0].status44.protection, 'over-voltage protection')
+assert.equal(statusWarn.batteries[0].status44.cellFaults, 'Cells 1–8: 1 · Cells 9–16: None')
+
+const statusUnavailable = format({
+  ...valid,
+  batteries: [{ address: 2, valid: true, effectiveCells: [], temperatures: [], status44: { available: false, timestamp: 100000, error: 'CID2=44 timeout' } }]
+}, null, 100000)
+assert.equal(statusUnavailable.batteries[0].status44.state, 'UNAVAILABLE')
+assert.equal(statusUnavailable.batteries[0].status44.stateClass, 'neutral')
+assert.equal(statusUnavailable.batteries[0].status44.error, 'CID2=44 timeout')
 assert.equal(live.valid, true)
 assert.equal(live.limits.status, '0x40')
 assert.deepEqual(live.limits.statusActive, ['discharge enabled'])

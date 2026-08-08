@@ -139,6 +139,116 @@ def decode_status(status: int) -> dict[str, Any]:
     }
 
 
+STATUS1_FLAGS = {
+    7: "pack under-voltage protection",
+    6: "charge temperature protection",
+    5: "discharge temperature protection",
+    4: "discharge over-current protection",
+    2: "charge over-current protection",
+    1: "cell under-voltage protection",
+    0: "over-voltage protection",
+}
+STATUS2_MASK = 0x0F
+STATUS3_FLAGS = {
+    7: "effective charging",
+    6: "effective discharging",
+    5: "heater active",
+    3: "fully charged",
+    0: "buzzer active",
+}
+STATUS3_MASK = sum(1 << bit for bit in STATUS3_FLAGS)
+
+
+def _active_status_flags(value: int, labels: dict[int, str]) -> list[dict[str, Any]]:
+    return [
+        {"bit": bit, "name": label, "description": label}
+        for bit, label in labels.items()
+        if value & (1 << bit)
+    ]
+
+
+def _reserved_status_bits(value: int, known_mask: int) -> dict[str, Any]:
+    reserved = value & (~known_mask & 0xFF)
+    return {"bits": reserved, "hex": f"0x{reserved:02X}"}
+
+
+def _cell_faults(value: int, first_cell: int) -> list[int]:
+    return [
+        first_cell + bit
+        for bit in range(8)
+        if value & (1 << bit)
+    ]
+
+
+@dataclass
+class StatusTelemetry44:
+    """Decoded CID2=0x44 per-battery alarm and status telemetry."""
+
+    data_flag: int
+    address: int
+    cell_alarms: list[int]
+    temperature_alarms: list[int]
+    charge_current_alarm: int
+    module_voltage_alarm: int
+    discharge_current_alarm: int
+    status1: int
+    status2: int
+    status3: int
+    status4: int
+    status5: int
+    raw_info: str
+    trailing_info: str
+
+    def as_dict(self) -> dict[str, Any]:
+        status1_flags = _active_status_flags(self.status1, STATUS1_FLAGS)
+        status3_flags = _active_status_flags(self.status3, STATUS3_FLAGS)
+        return {
+            "available": True,
+            "dataFlag": self.data_flag,
+            "address": self.address,
+            "status1": {
+                "raw": self.status1,
+                "active": status1_flags,
+                "reserved": _reserved_status_bits(self.status1, 0xF7),
+            },
+            "status2": {
+                "raw": self.status2,
+                "prechargeMosfet": bool(self.status2 & 0x01),
+                "chargeMosfet": bool(self.status2 & 0x02),
+                "dischargeMosfet": bool(self.status2 & 0x04),
+                "modulePowerActive": bool(self.status2 & 0x08),
+                "reserved": _reserved_status_bits(self.status2, STATUS2_MASK),
+            },
+            "status3": {
+                "raw": self.status3,
+                "effectiveCharging": bool(self.status3 & 0x80),
+                "effectiveDischarging": bool(self.status3 & 0x40),
+                "heaterActive": bool(self.status3 & 0x20),
+                "fullyCharged": bool(self.status3 & 0x08),
+                "buzzerActive": bool(self.status3 & 0x01),
+                "active": status3_flags,
+                "reserved": _reserved_status_bits(self.status3, STATUS3_MASK),
+            },
+            "status4": {
+                "raw": self.status4,
+                "cellFaults": _cell_faults(self.status4, 1),
+            },
+            "status5": {
+                "raw": self.status5,
+                "cellFaults": _cell_faults(self.status5, 9),
+            },
+            "alarms": {
+                "cell": self.cell_alarms,
+                "temperature": self.temperature_alarms,
+                "chargeCurrent": self.charge_current_alarm,
+                "moduleVoltage": self.module_voltage_alarm,
+                "dischargeCurrent": self.discharge_current_alarm,
+            },
+            "rawInfo": self.raw_info,
+            "trailingInfo": self.trailing_info,
+        }
+
+
 def _temperature(raw: int) -> float | None:
     value = raw / 10.0 - 273.15
     return value if -40.0 <= value <= 100.0 else None
@@ -336,6 +446,68 @@ def parse_pack_telemetry(frame: str, address: int) -> BatteryTelemetry:
         validation_errors=errors,
         raw_info=info,
         trailing_info=trailing_info,
+    )
+
+
+def parse_status_44(frame: str, address: int) -> StatusTelemetry44:
+    """Parse the complete Pylon/Dyness CID2=0x44 status response."""
+    response = parse_response(frame, address, 0x44)
+    info = response["infoAscii"]
+    data = bytes.fromhex(info)
+    if len(data) < 3:
+        raise ValueError("CID2=44 INFO is too short")
+    if data[1] != address:
+        raise ValueError(
+            f"unexpected CID2=44 address {data[1]:02X}, expected {address:02X}"
+        )
+
+    position = 2
+    cell_alarm_count = data[position]
+    position += 1
+    if cell_alarm_count > 32:
+        raise ValueError(f"implausible CID2=44 cell alarm count {cell_alarm_count}")
+    if len(data) < position + cell_alarm_count + 1:
+        raise ValueError("truncated CID2=44 cell alarms")
+    cell_alarms = list(data[position:position + cell_alarm_count])
+    position += cell_alarm_count
+
+    temperature_alarm_count = data[position]
+    position += 1
+    if temperature_alarm_count > 32:
+        raise ValueError(
+            f"implausible CID2=44 temperature alarm count {temperature_alarm_count}"
+        )
+    required = temperature_alarm_count + 8
+    if len(data) < position + required:
+        raise ValueError("truncated CID2=44 alarm/status block")
+    temperature_alarms = list(data[position:position + temperature_alarm_count])
+    position += temperature_alarm_count
+
+    charge_current_alarm = data[position]
+    module_voltage_alarm = data[position + 1]
+    discharge_current_alarm = data[position + 2]
+    status1 = data[position + 3]
+    status2 = data[position + 4]
+    status3 = data[position + 5]
+    status4 = data[position + 6]
+    status5 = data[position + 7]
+    position += 8
+
+    return StatusTelemetry44(
+        data_flag=data[0],
+        address=data[1],
+        cell_alarms=cell_alarms,
+        temperature_alarms=temperature_alarms,
+        charge_current_alarm=charge_current_alarm,
+        module_voltage_alarm=module_voltage_alarm,
+        discharge_current_alarm=discharge_current_alarm,
+        status1=status1,
+        status2=status2,
+        status3=status3,
+        status4=status4,
+        status5=status5,
+        raw_info=info,
+        trailing_info=info[position * 2:],
     )
 
 

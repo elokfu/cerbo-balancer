@@ -6,6 +6,52 @@ const count = (value) => typeof value === 'number' && Number.isInteger(value) &&
 const percent = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100 ? value.toFixed(0) : '—'
 const temperature = (value) => bounded(value, -40, 100, 1)
 const identifier = (value, metric) => metric !== '—' && typeof value === 'number' && Number.isInteger(value) && value >= 0 && value !== 65535 ? String(value) : '—'
+const byteHex = (value) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 255 ? `0x${value.toString(16).toUpperCase().padStart(2, '0')}` : '—'
+const onOff = (value) => typeof value === 'boolean' ? (value ? 'ON' : 'OFF') : '—'
+const noneOr = (values, fallback = 'None') => Array.isArray(values) && values.length ? values.join(', ') : fallback
+const status44View = (status) => {
+    const raw = status || {}
+    const status1 = raw.status1 || {}
+    const status2 = raw.status2 || {}
+    const status3 = raw.status3 || {}
+    const status4 = raw.status4 || {}
+    const status5 = raw.status5 || {}
+    const alarms = raw.alarms || {}
+    const ageMs = typeof raw.timestamp === 'number' ? Math.max(0, Date.now() - raw.timestamp) : null
+    const available = raw.available === true && ageMs != null && ageMs <= 10000
+    const protections = Array.isArray(status1.active) ? status1.active.map((item) => item.description || item.name) : []
+    const cellAlarms = Array.isArray(alarms.cell) ? alarms.cell.map((value, index) => value ? `cell ${index + 1}: 0x${Number(value).toString(16).toUpperCase().padStart(2, '0')}` : null).filter(Boolean) : []
+    const temperatureAlarms = Array.isArray(alarms.temperature) ? alarms.temperature.map((value, index) => value ? `temperature ${index + 1}: 0x${Number(value).toString(16).toUpperCase().padStart(2, '0')}` : null).filter(Boolean) : []
+    const alarmParts = [...cellAlarms, ...temperatureAlarms]
+    if (alarms.chargeCurrent) alarmParts.push(`charge current: 0x${Number(alarms.chargeCurrent).toString(16).toUpperCase().padStart(2, '0')}`)
+    if (alarms.moduleVoltage) alarmParts.push(`module voltage: 0x${Number(alarms.moduleVoltage).toString(16).toUpperCase().padStart(2, '0')}`)
+    if (alarms.dischargeCurrent) alarmParts.push(`discharge current: 0x${Number(alarms.dischargeCurrent).toString(16).toUpperCase().padStart(2, '0')}`)
+    const fault = protections.length > 0 || alarmParts.length > 0 || (status4.cellFaults || []).length > 0 || (status5.cellFaults || []).length > 0
+    const state = !available ? 'UNAVAILABLE' : fault ? 'WARN' : 'OK'
+    const stateClass = !available ? 'neutral' : fault ? 'bad' : 'good'
+    const chip = (label, value, tone) => ({ label, value, tone })
+    return {
+        available,
+        state,
+        stateClass,
+        error: raw.error || (ageMs != null && ageMs > 10000 ? `last status ${Math.round(ageMs / 1000)} s ago` : 'status not available'),
+        raw: `S1 ${byteHex(status1.raw)} · S2 ${byteHex(status2.raw)} · S3 ${byteHex(status3.raw)} · S4 ${byteHex(status4.raw)} · S5 ${byteHex(status5.raw)}`,
+        chips: available ? [
+            chip('Charge MOS', onOff(status2.chargeMosfet), status2.chargeMosfet ? 'good' : 'neutral'),
+            chip('Discharge MOS', onOff(status2.dischargeMosfet), status2.dischargeMosfet ? 'good' : 'neutral'),
+            chip('Power', onOff(status2.modulePowerActive), status2.modulePowerActive ? 'good' : 'neutral'),
+            chip('Effective', `${onOff(status3.effectiveCharging)}/${onOff(status3.effectiveDischarging)}`, status3.effectiveCharging || status3.effectiveDischarging ? 'good' : 'neutral'),
+            ...(status2.prechargeMosfet ? [chip('Precharge', 'ON', 'warning')] : []),
+            ...(status3.heaterActive ? [chip('Heater', 'ON', 'warning')] : [])
+        ] : [],
+        protection: noneOr(protections),
+        hardware: available ? `Precharge ${onOff(status2.prechargeMosfet)} · Charge MOS ${onOff(status2.chargeMosfet)} · Discharge MOS ${onOff(status2.dischargeMosfet)} · Power ${onOff(status2.modulePowerActive)}` : '—',
+        effective: available ? `Charging ${onOff(status3.effectiveCharging)} · Discharging ${onOff(status3.effectiveDischarging)} · Heater ${onOff(status3.heaterActive)} · Full ${onOff(status3.fullyCharged)} · Buzzer ${onOff(status3.buzzerActive)}` : '—',
+        cellFaults: available ? `Cells 1–8: ${noneOr(status4.cellFaults)} · Cells 9–16: ${noneOr(status5.cellFaults)}` : '—',
+        alarms: noneOr(alarmParts),
+        reserved: available ? `S1 ${status1.reserved?.hex || '0x00'} · S2 ${status2.reserved?.hex || '0x00'} · S3 ${status3.reserved?.hex || '0x00'}` : '—'
+    }
+}
 const now = Date.now()
 const lastValidAgeMs = lastValid && typeof lastValid.timestamp === 'number' ? Math.max(0, now - lastValid.timestamp) : null
 const displaySnapshot = current.valid === true ? current : lastValidAgeMs != null && lastValidAgeMs <= 10000 ? lastValid : {}
@@ -45,7 +91,8 @@ const batteries = (displaySnapshot.batteries || []).map((battery) => {
         reportedSum: number(battery.directlyReportedCellSum ?? battery.directly_reported_cell_sum),
         reconstructedSum: number(battery.reconstructedCellSum ?? battery.reconstructed_cell_sum),
         voltageDelta: number(battery.reconstructedVoltageDeltaMv ?? battery.reconstructed_voltage_delta_mv, 1),
-        errors: battery.validationErrors || battery.validation_errors || []
+        errors: battery.validationErrors || battery.validation_errors || [],
+        status44: status44View(battery.status44)
     }
 })
 

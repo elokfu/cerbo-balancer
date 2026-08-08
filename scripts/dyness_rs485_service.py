@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Supervised, read-only Dyness RS485 telemetry and virtual BMS service.
 
-The service only sends documented read requests (CID2 42, 61, and 63). It
+The service only sends documented read requests (CID2 42, 44, 61, and 63). It
 does not implement a serial write/configuration path or any charger write.
 When pyserial or the Cerbo D-Bus runtime is unavailable it emits an explicit
 unavailable snapshot and remains safe to run in shadow mode.
@@ -27,6 +27,7 @@ except ImportError:  # pragma: no cover - exercised on a non-Cerbo host
 from dyness_rs485_protocol import (
     parse_limits,
     parse_pack_telemetry,
+    parse_status_44,
     parse_system_61,
     request,
 )
@@ -38,6 +39,7 @@ NORMAL_DISCOVERY_INTERVAL = 60.0
 RECOVERY_DISCOVERY_INTERVAL = 10.0
 MAX_DISCOVERY_MISSES = 10
 SERIAL_RECONNECT_BACKOFF = 2.0
+STATUS44_INTERVAL = 5.0
 
 
 def now_ms() -> int:
@@ -162,6 +164,8 @@ class ReadOnlyPoller:
         self.pending_removal: dict[int, dict[str, Any]] = {}
         self.last_seen_at: dict[int, int] = {}
         self.next_discovery_at = 0.0
+        self.next_status_at = 0.0
+        self.status44_cache: dict[int, dict[str, Any]] = {}
         self.last_discovery_at: int | None = None
         if inventory:
             self.load_inventory(inventory)
@@ -423,7 +427,9 @@ class ReadOnlyPoller:
             else:
                 errors.append("CID2=63 timeout")
             discovery_due = time.monotonic() >= self.next_discovery_at
+            status_due = time.monotonic() >= self.next_status_at
             addresses = EXPECTED_ADDRESSES if discovery_due else tuple(self.active_addresses)
+            status_errors: list[str] = []
             for address in addresses:
                 frame = self.query(port, address, 0x42)
                 if not frame:
@@ -432,10 +438,54 @@ class ReadOnlyPoller:
                     battery = parse_pack_telemetry(frame, address).as_dict()
                     battery["systemVoltageDeltaMv"] = ((battery["voltage"] - system_voltage) * 1000
                                                          if system_voltage is not None else None)
+                    status44 = self.status44_cache.get(address)
+                    if status_due:
+                        status_frame = self.query(port, address, 0x44)
+                        if status_frame:
+                            try:
+                                status44 = parse_status_44(status_frame, address).as_dict()
+                                status44.update({"timestamp": now_ms(), "error": None})
+                                self.status44_cache[address] = status44
+                                raw_frames.append({
+                                    "cid2": "44",
+                                    "address": address,
+                                    "frame": status_frame.decode("ascii"),
+                                })
+                            except (UnicodeDecodeError, ValueError) as error:
+                                status_errors.append(
+                                    f"CID2=44 address {address:02X}: {error}"
+                                )
+                                status44 = {
+                                    "available": False,
+                                    "timestamp": now_ms(),
+                                    "error": str(error),
+                                }
+                                self.status44_cache[address] = status44
+                        else:
+                            error = f"CID2=44 address {address:02X} timeout"
+                            status_errors.append(error)
+                            status44 = {
+                                "available": False,
+                                "timestamp": now_ms(),
+                                "error": error,
+                            }
+                            self.status44_cache[address] = status44
+                    if status44 is None:
+                        status44 = {
+                            "available": False,
+                            "timestamp": now_ms(),
+                            "error": "CID2=44 status not available yet",
+                        }
+                    battery["status44"] = {
+                        **status44,
+                        "ageMs": max(0, now_ms() - status44["timestamp"]),
+                    }
                     batteries.append(battery)
                     raw_frames.append({"cid2": "42", "address": address, "frame": frame.decode("ascii")})
                 except (UnicodeDecodeError, ValueError) as error:
                     errors.append(f"CID2=42 address {address:02X}: {error}")
+            if status_due:
+                self.next_status_at = time.monotonic() + STATUS44_INTERVAL
             if discovery_due:
                 self.apply_discovery([item["address"] for item in batteries], now_ms())
             valid_batteries = [item for item in batteries if item["valid"]]
@@ -457,6 +507,11 @@ class ReadOnlyPoller:
                 "respondingAddresses": [item["address"] for item in batteries], "respondingCount": len(batteries),
                 "scanType": "full" if discovery_due else "active"},
                 "batteries": batteries,
+                "status44Health": {
+                    "state": "healthy" if not status_errors else "degraded",
+                    "errors": status_errors,
+                    "pollIntervalSeconds": STATUS44_INTERVAL,
+                },
                 "aggregate": {"summedBatteryCurrent": sum(currents) if all_expected_valid else None,
                 "vmin": vmin_entry[1]["voltage"], "vmax": vmax_entry[1]["voltage"],
                 "spread": (vmax_entry[1]["voltage"] - vmin_entry[1]["voltage"] if cells else None),

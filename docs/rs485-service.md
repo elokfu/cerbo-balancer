@@ -7,6 +7,15 @@ It discovers Dyness/Pylon addresses 2–16 and sends only read requests:
 - CID2 `0x61`: complete system summary, including system current, SOC, cell
   summary, and cell/MOSFET/BMS temperatures.
 - CID2 `0x63`: charge/discharge voltage, CCL, DCL, and permission/state bits.
+- CID2 `0x44`: per-battery alarms plus complete Status1–Status5 decoding.
+
+CID2 `0x44` is polled for active batteries every five seconds. Status1
+contains protection flags; Status2 contains precharge, charge/discharge
+MOSFET, and module-power states; Status3 contains effective charging,
+effective discharging, heater, full-charge, and buzzer states. Status4 and
+Status5 identify cell voltage-check faults for cells 1–8 and 9–16. These
+values are diagnostic-only and do not alter telemetry validity, DVCC limits,
+or controller behavior.
 
 The CID2 `0x63` status byte is decoded and retained as `limits.statusFlags`.
 The correct Pylon/Dyness meanings are: bit 7 charge enabled, bit 6 discharge

@@ -1,5 +1,6 @@
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -8,6 +9,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import dyness_rs485_service as service  # noqa: E402
 from dyness_rs485_service import JsonlStore, ReadOnlyPoller, effective_control  # noqa: E402
+from dyness_rs485_protocol import checksum, length_field  # noqa: E402
+
+
+def response(address, cid2, info):
+    body = f"20{address:02X}4600{length_field(len(info))}{info}"
+    return f"~{body}{checksum(body)}\r".encode("ascii")
 
 
 class DynessServiceTests(unittest.TestCase):
@@ -88,6 +95,49 @@ class DynessServiceTests(unittest.TestCase):
         self.assertEqual(snapshot["effectiveControl"]["effectiveChargeVoltage"], 53.0)
         self.assertEqual(poller.active_addresses, [2])
         self.assertEqual(snapshot["serialHealth"]["state"], "disconnected")
+
+    def test_status44_is_polled_every_five_seconds_without_affecting_validity(self):
+        poller = ReadOnlyPoller("C:\\fake-dyness-rs485", 115200, 0.01)
+        poller.active_addresses = [2]
+        poller.next_discovery_at = time.monotonic() + 60
+
+        system_data = bytearray(49)
+        system_data[0:2] = (54480).to_bytes(2, "big")
+        system_data[4] = 100
+        limits_info = f"{56500:04X}{48000:04X}{560:04X}{0xF83C:04X}C0"
+        cells = "".join(f"{3500:04X}" for _ in range(16))
+        pack_info = f"000210{cells}00{0:04X}{56000:04X}"
+        status_info = "00020000000000F70FE98140"
+        frames = {
+            0x61: response(2, 0x61, system_data.hex().upper()),
+            0x63: response(2, 0x63, limits_info),
+            0x42: response(2, 0x42, pack_info),
+            0x44: response(2, 0x44, status_info),
+        }
+        calls = []
+
+        poller._open_serial = lambda: object()
+        poller._owner_conflict = lambda: False
+
+        def query(_port, address, cid2):
+            calls.append(cid2)
+            return frames[cid2]
+
+        poller.query = query
+        first = poller.poll()
+        self.assertTrue(first["valid"])
+        self.assertEqual(first["batteries"][0]["status44"]["status2"]["raw"], 0x0F)
+        self.assertIn(0x44, calls)
+
+        calls.clear()
+        second = poller.poll()
+        self.assertTrue(second["valid"])
+        self.assertNotIn(0x44, calls)
+
+        poller.next_status_at = time.monotonic()
+        third = poller.poll()
+        self.assertTrue(third["valid"])
+        self.assertIn(0x44, calls)
 
     def test_active_command_is_arbitrated_by_bms_limits_and_temperature(self):
         snapshot = {
