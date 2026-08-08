@@ -83,14 +83,22 @@ assert.equal(live.system.maximumCycleCount, '456')
 assert.equal(live.system.averageSoh, '100')
 assert.equal(live.system.minimumSoh, '99')
 assert.equal(live.system.cellSummary.maximumVoltage, '3.524')
-assert.equal(live.system.cellSummary.maximumId, '1794')
-assert.equal(live.system.cellSummary.minimumId, '2818')
+assert.equal(live.system.cellSummary.maximumId, 'Battery 2 · Cell 07')
+assert.equal(live.system.cellSummary.minimumId, 'Battery 2 · Cell 11')
+assert.equal(live.system.cellSummary.maximumRawId, '0x0702')
+assert.equal(live.system.cellSummary.minimumRawId, '0x0B02')
 assert.equal(live.system.cellSummary.spread, '0.182')
 assert.equal(live.system.cellTemperature.maximumId, '1026')
 assert.equal(live.system.mosfetTemperature.minimumId, '655')
 assert.equal(live.system.bmsTemperature.average, '34.2')
 assert.equal(live.system.bmsTemperature.maximumId, '258')
 assert.equal(live.system.bmsTemperature.single, null)
+const packedCellId = format({
+  ...valid,
+  system: { ...valid.system, maximumCellId61: 0x1102 }
+}, null, 100000)
+assert.equal(packedCellId.system.cellSummary.maximumId, 'Battery 2 · Cell 11')
+assert.equal(packedCellId.system.cellSummary.maximumRawId, '0x1102')
 const singleBms = format({
   ...valid,
   system: {

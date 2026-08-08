@@ -7,6 +7,15 @@ const percent = (value) => typeof value === 'number' && Number.isFinite(value) &
 const temperature = (value) => bounded(value, -40, 100, 1)
 const identifier = (value, metric) => metric !== '—' && typeof value === 'number' && Number.isInteger(value) && value >= 0 && value !== 65535 ? String(value) : '—'
 const byteHex = (value) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 255 ? `0x${value.toString(16).toUpperCase().padStart(2, '0')}` : '—'
+const wordHex = (value) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 65535 ? `0x${value.toString(16).toUpperCase().padStart(4, '0')}` : '—'
+const cellLocation = (value, metric) => {
+    if (metric === '—' || typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 65535 || value === 65535) return '—'
+    const packed = value.toString(16).toUpperCase().padStart(4, '0')
+    const cellByte = packed.slice(0, 2)
+    const cell = /^\d{2}$/.test(cellByte) ? Number(cellByte) : Number.parseInt(cellByte, 16)
+    const battery = Number.parseInt(packed.slice(2), 16)
+    return cell > 0 && cell <= 16 && battery >= 0 ? `Battery ${battery} · Cell ${String(cell).padStart(2, '0')}` : '—'
+}
 const onOff = (value) => typeof value === 'boolean' ? (value ? 'ON' : 'OFF') : '—'
 const noneOr = (values, fallback = 'None') => Array.isArray(values) && values.length ? values.join(', ') : fallback
 const status44View = (status) => {
@@ -150,9 +159,11 @@ msg.payload = {
         minimumSoh: percent(system.minimumSoh61),
         cellSummary: {
             maximumVoltage: systemMaximumCellVoltage,
-            maximumId: identifier(system.maximumCellId61, systemMaximumCellVoltage),
+            maximumId: cellLocation(system.maximumCellId61, systemMaximumCellVoltage),
+            maximumRawId: wordHex(system.maximumCellId61),
             minimumVoltage: systemMinimumCellVoltage,
-            minimumId: identifier(system.minimumCellId61, systemMinimumCellVoltage),
+            minimumId: cellLocation(system.minimumCellId61, systemMinimumCellVoltage),
+            minimumRawId: wordHex(system.minimumCellId61),
             spread: systemMaximumCellVoltage !== '—' && systemMinimumCellVoltage !== '—'
                 ? number(Number(systemMaximumCellVoltage) - Number(systemMinimumCellVoltage), 3)
                 : '—'
