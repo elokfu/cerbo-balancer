@@ -31,7 +31,11 @@ while kill -0 "$poller_pid" 2>/dev/null; do
                 foreign_owner=1
             fi
         done
-        if [ -e /dev/serial-starter/ttyUSB0 ] || [ "$foreign_owner" -eq 1 ]; then
+        # The serial-starter symlink is normally present even while its
+        # workers are stopped.  It is not an ownership signal; invoking the
+        # stop hook on every loop causes avoidable lock churn.  Reapply the
+        # handoff only when a different process has actually opened the port.
+        if [ "$foreign_owner" -eq 1 ]; then
             take_ownership
         fi
     fi
