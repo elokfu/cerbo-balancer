@@ -264,7 +264,7 @@
     "height": 16,
     "format": "__CONTROLLER_DASHBOARD__",
     "storeOutMessages": true,
-    "passthru": true,
+    "passthru": false,
     "resendOnRefresh": false,
     "templateScope": "local",
     "className": "",

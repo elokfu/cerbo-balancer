@@ -89,6 +89,7 @@ function createBalancerController (options = {}) {
   let outputReady = false
   const events = []
   const history = []
+  let lastPersistenceKey = null
 
   function record (timestamp, type, detail, extra = {}) {
     const event = { timestamp, date: localDate(timestamp), type, detail, ...extra }
@@ -243,9 +244,16 @@ function createBalancerController (options = {}) {
       chargeEnabled: command.chargeEnabled === true
     })
     if (history.length > 360) history.splice(0, history.length - 360)
+    const persistedState = { ...state }
+    delete persistedState.lastEvaluationAt
+    const persistence = { state: persistedState, config: { ...config } }
+    const persistenceKey = JSON.stringify(persistence)
     state.lastEvaluationAt = timestamp
     actions.push({ type: 'controller_command', value: controllerCommand })
-    actions.push({ type: 'persist', state: { ...state }, config: { ...config } })
+    if (persistenceKey !== lastPersistenceKey) {
+      lastPersistenceKey = persistenceKey
+      actions.push({ type: 'persist', ...persistence })
+    }
     actions.push({ type: 'status', status: status(timestamp, info, controllerCommand) })
     return actions
   }
