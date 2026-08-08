@@ -90,6 +90,18 @@ assert.equal(live.system.cellTemperature.maximumId, '1026')
 assert.equal(live.system.mosfetTemperature.minimumId, '655')
 assert.equal(live.system.bmsTemperature.average, '34.2')
 assert.equal(live.system.bmsTemperature.maximumId, '258')
+assert.equal(live.system.bmsTemperature.single, null)
+const singleBms = format({
+  ...valid,
+  system: {
+    ...valid.system,
+    averageBmsTemperature61: null,
+    maximumBmsTemperature61: 34.2,
+    minimumBmsTemperature61: 34.2
+  }
+}, null, 100000)
+assert.equal(singleBms.system.bmsTemperature.single.value, '34.2')
+assert.equal(singleBms.system.bmsTemperature.single.id, '258')
 assert.equal(live.valid, true)
 assert.equal(live.limits.status, '0x40')
 assert.deepEqual(live.limits.statusActive, ['discharge enabled'])

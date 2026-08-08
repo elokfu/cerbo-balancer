@@ -18,6 +18,14 @@ const inventory = current.inventory || displaySnapshot.inventory || {}
 const health = current.serialHealth || displaySnapshot.serialHealth || {}
 const systemMaximumCellVoltage = bounded(system.maximumCellVoltage61, 2, 4.5)
 const systemMinimumCellVoltage = bounded(system.minimumCellVoltage61, 2, 4.5)
+const bmsAverageTemperature = temperature(system.averageBmsTemperature61)
+const bmsMaximumTemperature = temperature(system.maximumBmsTemperature61)
+const bmsMinimumTemperature = temperature(system.minimumBmsTemperature61)
+const bmsMaximumId = identifier(system.maximumBmsTemperatureId61, bmsMaximumTemperature)
+const bmsMinimumId = identifier(system.minimumBmsTemperatureId61, bmsMinimumTemperature)
+const bmsSingleTemperature = bmsMaximumTemperature !== '—' && bmsMaximumTemperature === bmsMinimumTemperature && bmsMaximumId === bmsMinimumId
+    ? { value: bmsMaximumTemperature, id: bmsMaximumId }
+    : null
 
 const batteries = (displaySnapshot.batteries || []).map((battery) => {
     const cells = battery.effectiveCells || battery.effective_cells || []
@@ -90,11 +98,12 @@ msg.payload = {
             minimumId: identifier(system.minimumMosfetTemperatureId61, temperature(system.minimumMosfetTemperature61))
         },
         bmsTemperature: {
-            average: temperature(system.averageBmsTemperature61),
-            maximum: temperature(system.maximumBmsTemperature61),
-            maximumId: identifier(system.maximumBmsTemperatureId61, temperature(system.maximumBmsTemperature61)),
-            minimum: temperature(system.minimumBmsTemperature61),
-            minimumId: identifier(system.minimumBmsTemperatureId61, temperature(system.minimumBmsTemperature61))
+            average: bmsAverageTemperature,
+            maximum: bmsMaximumTemperature,
+            maximumId: bmsMaximumId,
+            minimum: bmsMinimumTemperature,
+            minimumId: bmsMinimumId,
+            single: bmsSingleTemperature
         }
     },
     limits: {
