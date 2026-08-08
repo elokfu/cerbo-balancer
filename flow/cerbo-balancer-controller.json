@@ -326,7 +326,7 @@
     "id": "bal-rs485-service",
     "type": "exec",
     "z": "bal-tab",
-    "command": "python3 /data/home/nodered/cerbo-balancer/dyness_rs485_service.py --port /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A602K5MM-if00-port0 --baud 115200 --state-dir /data/home/nodered --no-serial-starter-stop",
+    "command": "python3 /data/home/nodered/cerbo-balancer/dyness_rs485_service.py --port /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A602K5MM-if00-port0 --baud 115200 --state-dir /data/home/nodered",
     "addpay": false,
     "append": "",
     "useSpawn": "true",

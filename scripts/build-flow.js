@@ -29,7 +29,6 @@ controllerNode.func = controllerNode.func.replace(
 )
 const rs485ServiceNode = flow.find(node => node.id === 'bal-rs485-service')
 if (!rs485ServiceNode) throw new Error('bal-rs485-service node is missing from the flow template')
-rs485ServiceNode.command += ' --no-serial-starter-stop'
 const maintenanceFormatterNode = flow.find(node => node.id === 'bal-maint-format')
 if (!maintenanceFormatterNode) throw new Error('bal-maint-format node is missing from the flow template')
 maintenanceFormatterNode.func = maintenanceFormatter
