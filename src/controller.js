@@ -172,8 +172,14 @@ function createBalancerController (options = {}) {
       resetPi(); releaseSelection()
       command = safeNormalCommand('CONTROLLER_DISABLED')
     } else if (!info.valid) {
-      state.fault = info.lockout; resetPi(); transition(STATES.FAULT_OR_ABORT, timestamp, info.lockout)
-      command = disabledCommand('TELEMETRY_FAULT', config.protectionRecoveryVoltage)
+      const balancingState = [STATES.BALANCE_ELIGIBILITY, STATES.BALANCE_RESTART, STATES.BALANCE_CURRENT_CONTROL, STATES.BALANCE_CONFIRM, STATES.BALANCE_DISCHARGE_RECOVERY, STATES.PROTECTION_RECOVERY].includes(state.state)
+      if (balancingState || state.mode === MODES.ACTIVE) {
+        state.fault = info.lockout; resetPi(); transition(STATES.FAULT_OR_ABORT, timestamp, info.lockout)
+      }
+      command = disabledCommand('TELEMETRY_LOCKOUT', config.protectionRecoveryVoltage)
+    } else if (state.state === STATES.FAULT_OR_ABORT && state.mode === MODES.TEST && state.fault === 'complete fresh telemetry from every expected battery is required') {
+      state.fault = null; resetPi(); releaseSelection(); transition(STATES.NORMAL, timestamp, 'TEST telemetry recovered')
+      command = safeNormalCommand('TEST_TELEMETRY_RECOVERED')
     } else if (state.state === STATES.FAULT_OR_ABORT) {
       command = disabledCommand('FAULT_OR_ABORT', config.protectionRecoveryVoltage)
     } else {

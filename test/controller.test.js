@@ -29,6 +29,14 @@ controller.handle({ type: 'set_enabled', value: true, timestamp: clock })
 controller.handle({ type: 'tick', timestamp: clock })
 assert.equal(controller.getState().state, STATES.FAULT_OR_ABORT) // output readback is deliberately required
 
+const startup = createBalancerController({ now: () => clock })
+startup.handle({ type: 'set_enabled', value: true, timestamp: clock })
+assert.equal(startup.getState().state, STATES.NORMAL)
+startup.handle({ type: 'load', state: { state: STATES.FAULT_OR_ABORT, mode: MODES.TEST, enabled: true, fault: 'complete fresh telemetry from every expected battery is required' }, timestamp: clock })
+startup.handle({ type: 'telemetry', telemetry: telemetry(), timestamp: clock })
+assert.equal(startup.getState().state, STATES.NORMAL)
+assert.equal(startup.getState().fault, null)
+
 const active = createBalancerController({ now: () => clock })
 active.handle({ type: 'telemetry', telemetry: telemetry(), timestamp: clock })
 active.handle({ type: 'set_output_ready', value: true, timestamp: clock })
