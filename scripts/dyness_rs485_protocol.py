@@ -267,6 +267,41 @@ def _cell_voltage(raw: int) -> float | None:
     return value if 2.0 <= value <= 4.5 else None
 
 
+def decode_capacity_tail_42(trailing: bytes | str) -> dict[str, Any] | None:
+    """Decode the optional CID2=0x42 lifetime/capacity tail.
+
+    Dyness/Pylon responses may append legacy 16-bit capacity fields followed
+    by the extended 24-bit mAh values.  The legacy fields are saturated for
+    larger packs, so they are accepted only as structural markers.  An
+    absent or unrecognised tail is optional telemetry and does not invalidate
+    the voltage/cell measurement.
+    """
+    if isinstance(trailing, str):
+        try:
+            trailing = bytes.fromhex(trailing)
+        except ValueError:
+            return None
+    if len(trailing) < 13:
+        return None
+    legacy_remaining = u16be(trailing, 0)
+    user_items = u8(trailing, 2)
+    legacy_total = u16be(trailing, 3)
+    cycle_count = u16be(trailing, 5)
+    remaining_mah = int.from_bytes(trailing[7:10], "big")
+    total_mah = int.from_bytes(trailing[10:13], "big")
+    if legacy_remaining != 0xFFFF or legacy_total != 0xFFFF or user_items != 0x04:
+        return None
+    if cycle_count > 20000 or total_mah <= 0 or remaining_mah > total_mah * 1.05:
+        return None
+    return {
+        "cycleCount": cycle_count,
+        "remainingCapacityAh": remaining_mah / 1000.0,
+        "totalCapacityAh": total_mah / 1000.0,
+        "capacitySoc": remaining_mah / total_mah * 100.0,
+        "rawCapacityTail": trailing[:13].hex().upper(),
+    }
+
+
 @dataclass
 class SystemTelemetry61:
     voltage: float | None
@@ -346,6 +381,11 @@ class BatteryTelemetry:
     validation_errors: list[str]
     raw_info: str
     trailing_info: str
+    cycle_count: int | None = None
+    remaining_capacity_ah: float | None = None
+    total_capacity_ah: float | None = None
+    capacity_soc: float | None = None
+    raw_capacity_tail: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         minimum = min(self.temperatures) if self.temperatures else None
@@ -374,6 +414,11 @@ class BatteryTelemetry:
             "validationErrors": self.validation_errors,
             "rawInfo": self.raw_info,
             "trailingInfo": self.trailing_info,
+            "cycleCount": self.cycle_count,
+            "remainingCapacityAh": self.remaining_capacity_ah,
+            "totalCapacityAh": self.total_capacity_ah,
+            "capacitySoc": self.capacity_soc,
+            "rawCapacityTail": self.raw_capacity_tail,
         }
 
 
@@ -411,6 +456,7 @@ def parse_pack_telemetry(frame: str, address: int) -> BatteryTelemetry:
     pos += 4
     voltage = int(info[pos:pos + 4], 16) / 1000.0
     trailing_info = info[pos + 4:]
+    capacity = decode_capacity_tail_42(trailing_info)
     directly_reported = sum(cells)
     effective = [{"index": i + 1, "voltage": value, "source": "reported"}
                  for i, value in enumerate(cells)]
@@ -446,6 +492,11 @@ def parse_pack_telemetry(frame: str, address: int) -> BatteryTelemetry:
         validation_errors=errors,
         raw_info=info,
         trailing_info=trailing_info,
+        cycle_count=capacity["cycleCount"] if capacity else None,
+        remaining_capacity_ah=capacity["remainingCapacityAh"] if capacity else None,
+        total_capacity_ah=capacity["totalCapacityAh"] if capacity else None,
+        capacity_soc=capacity["capacitySoc"] if capacity else None,
+        raw_capacity_tail=capacity["rawCapacityTail"] if capacity else "",
     )
 
 

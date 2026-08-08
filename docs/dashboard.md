@@ -13,16 +13,19 @@ module-power, effective charge/discharge, protection, and alarm state. The
 raw Status1–Status5 registers and complete protection, alarm, cell-fault, and
 reserved-bit details are available under the collapsed `Status details`
 section, keeping the normal view compact.
-The CID2 `0x61` System Summary groups electrical values, cycle/SOH health,
+The CID2 `0x61` System Summary groups electrical values and SOH health,
 cell extrema and IDs, cell temperatures, MOSFET temperatures, and BMS
-temperatures. IDs are shown beside valid measurements; trailing hex remains
-available only in raw telemetry and logs.
+temperatures. The health and capacity section adds average SOH, cycle count,
+remaining capacity, and total capacity from the validated CID2 `0x42` tail.
+IDs are shown beside valid measurements; trailing hex remains available only
+in raw telemetry and logs.
 All displayed CID2 `0x61` location IDs are decoded as `Battery N · Channel NN`
 using the first byte as the channel/cell number and the second byte as the
 battery number. Cell locations use `Cell NN`; temperature locations use
 `Sensor NN`. The raw packed hexadecimal ID remains available in formatted
-telemetry. The MOSFET temperature summary intentionally shows only average
-and maximum values.
+telemetry. The MOSFET temperature summary intentionally omits the average
+row. If the CID2 `0x61` cell-temperature average is invalid, the page
+calculates a fallback average from validated CID2 `0x42` sensor readings.
 Unphysical CID2 `0x61` sentinel values such as `0xFFFF` temperatures are
 displayed as `—` and are not used for control.
 It also shows active addresses, pending-removal batteries, missed-scan counts,

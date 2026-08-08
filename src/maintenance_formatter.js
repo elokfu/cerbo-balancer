@@ -119,6 +119,10 @@ const batteries = (displaySnapshot.batteries || []).map((battery) => {
         valid: battery.valid === true,
         voltage: number(battery.voltage),
         current: number(battery.current, 1),
+        cycleCount: count(battery.cycleCount ?? battery.cycle_count),
+        remainingCapacity: bounded(battery.remainingCapacityAh ?? battery.remaining_capacity_ah, 0, 100000, 1),
+        totalCapacity: bounded(battery.totalCapacityAh ?? battery.total_capacity_ah, 0, 100000, 1),
+        capacitySoc: bounded(battery.capacitySoc ?? battery.capacity_soc, 0, 100, 1),
         delta: number(battery.systemVoltageDeltaMv ?? battery.system_voltage_delta_mv, 1),
         cellSpread: cellValues.length ? number(Math.max(...cellValues) - Math.min(...cellValues)) : '—',
         cells: cells.map((cell) => ({ index: cell.index, voltage: number(cell.voltage) })),
@@ -133,6 +137,32 @@ const batteries = (displaySnapshot.batteries || []).map((battery) => {
         status44: status44View(battery.status44)
     }
 })
+
+const sourceBatteries = displaySnapshot.batteries || []
+const completeCapacity = sourceBatteries.length > 0 && sourceBatteries.every((battery) =>
+    battery.valid === true &&
+    Number.isInteger(battery.cycleCount ?? battery.cycle_count) &&
+    Number.isFinite(battery.remainingCapacityAh ?? battery.remaining_capacity_ah) &&
+    Number.isFinite(battery.totalCapacityAh ?? battery.total_capacity_ah)
+)
+const cycleCounts = completeCapacity ? sourceBatteries.map((battery) => battery.cycleCount ?? battery.cycle_count) : []
+const commonCycleCount = cycleCounts.length && cycleCounts.every((value) => value === cycleCounts[0])
+    ? String(cycleCounts[0])
+    : completeCapacity ? 'varies' : '—'
+const totalRemainingCapacity = completeCapacity
+    ? number(sourceBatteries.reduce((sum, battery) => sum + (battery.remainingCapacityAh ?? battery.remaining_capacity_ah), 0), 1)
+    : '—'
+const totalCapacity = completeCapacity
+    ? number(sourceBatteries.reduce((sum, battery) => sum + (battery.totalCapacityAh ?? battery.total_capacity_ah), 0), 1)
+    : '—'
+const cellTemperatureValues = sourceBatteries
+    .flatMap((battery) => Array.isArray(battery.temperatures) ? battery.temperatures : [])
+    .filter((value) => typeof value === 'number' && Number.isFinite(value) && value >= -40 && value <= 100)
+const systemCellTemperatureAverage = temperature(system.averageCellTemperature61) !== '—'
+    ? temperature(system.averageCellTemperature61)
+    : cellTemperatureValues.length
+        ? number(cellTemperatureValues.reduce((sum, value) => sum + value, 0) / cellTemperatureValues.length, 1)
+        : '—'
 
 msg.payload = {
     decoder: current.decoderHealth || 'unknown',
@@ -159,6 +189,9 @@ msg.payload = {
         maximumCycleCount: count(system.maximumCycleCount61),
         averageSoh: percent(system.averageSoh61),
         minimumSoh: percent(system.minimumSoh61),
+        cycleCount: commonCycleCount,
+        remainingCapacity: totalRemainingCapacity,
+        totalCapacity,
         cellSummary: {
             maximumVoltage: systemMaximumCellVoltage,
             maximumId: cellLocation(system.maximumCellId61, systemMaximumCellVoltage),
@@ -171,7 +204,7 @@ msg.payload = {
                 : '—'
         },
         cellTemperature: {
-            average: temperature(system.averageCellTemperature61),
+            average: systemCellTemperatureAverage,
             maximum: temperature(system.maximumCellTemperature61),
             maximumId: sensorLocation(system.maximumCellTemperatureId61, temperature(system.maximumCellTemperature61)),
             maximumRawId: wordHex(system.maximumCellTemperatureId61),

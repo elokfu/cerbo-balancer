@@ -9,6 +9,11 @@ It discovers Dyness/Pylon addresses 2–16 and sends only read requests:
 - CID2 `0x63`: charge/discharge voltage, CCL, DCL, and permission/state bits.
 - CID2 `0x44`: per-battery alarms plus complete Status1–Status5 decoding.
 
+CID2 `0x42` capacity/lifetime tails are decoded when their structural markers
+are valid: cycle count, remaining capacity in Ah, total capacity in Ah, and
+capacity-derived SOC. These optional fields are published with each battery;
+missing or invalid tails do not invalidate otherwise valid cell telemetry.
+
 CID2 `0x44` is polled for active batteries every five seconds. Status1
 contains protection flags; Status2 contains precharge, charge/discharge
 MOSFET, and module-power states; Status3 contains effective charging,

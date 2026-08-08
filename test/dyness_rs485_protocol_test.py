@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from dyness_rs485_protocol import (  # noqa: E402
     checksum,
+    decode_capacity_tail_42,
     decode_status,
     length_field,
     parse_system_61,
@@ -50,6 +51,20 @@ class DynessProtocolTests(unittest.TestCase):
         self.assertAlmostEqual(battery.current, -5.0)
         self.assertAlmostEqual(battery.temperatures[0], 25.0)
         self.assertAlmostEqual(battery.temperatures[1], 30.0)
+
+    def test_capacity_tail_decodes_cycle_count_and_ah_values(self):
+        cells = "".join(f"{value:04X}" for value in [3500] * 16)
+        tail = "FFFF04FFFF000C043AD00445C0"
+        info = f"000210{cells}00" + "0000" + f"{56000:04X}" + tail
+        battery = parse_pack_telemetry(response(2, 0x42, info), 2)
+        self.assertEqual(battery.cycle_count, 12)
+        self.assertAlmostEqual(battery.remaining_capacity_ah, 277.2)
+        self.assertAlmostEqual(battery.total_capacity_ah, 280.0)
+        self.assertAlmostEqual(battery.capacity_soc, 99.0, places=1)
+        self.assertEqual(battery.raw_capacity_tail, tail)
+
+    def test_invalid_capacity_tail_is_optional(self):
+        self.assertIsNone(decode_capacity_tail_42("00000000000000000000000000"))
 
     def test_system_and_limits_values(self):
         system = response(2, 0x61, "D00000005A")

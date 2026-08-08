@@ -69,7 +69,18 @@ const valid = {
     }
   },
   aggregate: { vmin: 3.346, vmax: 3.582, spread: 0.236 },
-  batteries: [],
+  batteries: [{
+    address: 2,
+    valid: true,
+    voltage: 54.49,
+    current: 0.1,
+    temperatures: [26.1, 25.9, 26.1, 26.4, 26.3],
+    cycleCount: 12,
+    remainingCapacityAh: 277.2,
+    totalCapacityAh: 280.0,
+    capacitySoc: 99.0,
+    effectiveCells: []
+  }],
   inventory: { activeAddresses: [2], pendingRemoval: [], discoveryMode: 'normal', scanIntervalSeconds: 60 },
   serialHealth: { state: 'connected', reconnectCount: 1, ownerConflict: false }
 }
@@ -82,6 +93,9 @@ assert.equal(live.system.averageCycleCount, '123')
 assert.equal(live.system.maximumCycleCount, '456')
 assert.equal(live.system.averageSoh, '100')
 assert.equal(live.system.minimumSoh, '99')
+assert.equal(live.system.cycleCount, '12')
+assert.equal(live.system.remainingCapacity, '277.2')
+assert.equal(live.system.totalCapacity, '280.0')
 assert.equal(live.system.cellSummary.maximumVoltage, '3.524')
 assert.equal(live.system.cellSummary.maximumId, 'Battery 2 · Cell 07')
 assert.equal(live.system.cellSummary.minimumId, 'Battery 2 · Cell 11')
@@ -193,6 +207,6 @@ const invalidPhysical = format({
 }, null, 100000)
 assert.equal(invalidPhysical.system.averageCycleCount, '—')
 assert.equal(invalidPhysical.system.minimumSoh, '—')
-assert.equal(invalidPhysical.system.cellTemperature.average, '—')
+assert.equal(invalidPhysical.system.cellTemperature.average, '26.2')
 assert.equal(invalidPhysical.system.cellTemperature.maximum, '—')
 assert.equal(invalidPhysical.system.cellTemperature.maximumId, '—')
