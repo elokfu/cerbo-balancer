@@ -136,7 +136,6 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
     ))
     discharge_blocked = any(status_flags.get(name, False) for name in (
         "cellUnderVoltageWarning", "dischargeOverCurrentWarning",
-        "protectionActive",
     ))
     if status_flags.get("underTemperatureWarning") or status_flags.get("overTemperatureWarning"):
         factor = 0.0
@@ -626,8 +625,8 @@ class DbusPublisher:
             "/Info/MaxChargeVoltage": dbus.Double(float(cvl or 53.0)),
             "/Info/MaxChargeCurrent": dbus.Double(float(ccl or 0.0)),
             "/Info/MaxDischargeCurrent": dbus.Double(float(dcl or 0.0)),
-            "/Bms/AllowToCharge": dbus.Boolean(bool(snapshot.get("valid") and ccl is not None and ccl >= 0 and not control.get("chargeBlockedByStatus"))),
-            "/Bms/AllowToDischarge": dbus.Boolean(bool(snapshot.get("valid") and dcl is not None and dcl >= 0 and not control.get("dischargeBlockedByStatus"))),
+            "/Bms/AllowToCharge": dbus.Boolean(bool(snapshot.get("valid") and ccl is not None and ccl > 0 and not control.get("chargeBlockedByStatus"))),
+            "/Bms/AllowToDischarge": dbus.Boolean(bool(snapshot.get("valid") and dcl is not None and dcl > 0 and not control.get("dischargeBlockedByStatus"))),
             "/Bms/StatusRaw": dbus.UInt32(int(limits.get("statusRaw") or 0)),
             "/Bms/Status": dbus.String(status_severity),
             "/Alarms/LowVoltage": dbus.Boolean(bool(status_flags.get("cellUnderVoltageWarning"))),

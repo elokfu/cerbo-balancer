@@ -141,7 +141,22 @@ class DynessServiceTests(unittest.TestCase):
         result = effective_control(snapshot, None)
         self.assertEqual(result["effectiveChargeVoltage"], 53.0)
         self.assertEqual(result["effectiveChargeCurrent"], 0.0)
-        self.assertEqual(result["effectiveDischargeCurrent"], 0.0)
+        self.assertEqual(result["effectiveDischargeCurrent"], 198.8)
+
+    def test_temperature_warning_stops_charge_but_preserves_discharge(self):
+        snapshot = {
+            "valid": True,
+            "batteries": [{"temperatures": [25.0]}],
+            "limits": {
+                "chargeVoltage": 56.5,
+                "chargeCurrent": 56.0,
+                "dischargeCurrentSigned": -198.8,
+                "statusFlags": {"overTemperatureWarning": True, "severity": "warning"},
+            },
+        }
+        result = effective_control(snapshot, None)
+        self.assertEqual(result["effectiveChargeCurrent"], 0.0)
+        self.assertEqual(result["effectiveDischargeCurrent"], 198.8)
 
     def test_store_creates_runtime_files_without_credentials(self):
         with tempfile.TemporaryDirectory() as directory:

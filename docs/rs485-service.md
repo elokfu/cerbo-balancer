@@ -16,8 +16,9 @@ their bit number and description.
 
 Safety handling is conservative: cell over-voltage, cold/hot warnings, charge
 over-current, and protection block charging; cell under-voltage and discharge
-over-current block discharge; temperature warnings also force the thermal
-factor to zero; protection clamps the charge-voltage ceiling to 53.0 V. The
+over-current block discharge. Temperature warnings also force the thermal
+factor to zero, without disabling discharge; OVP/protection clamps the
+charge-voltage ceiling to 53.0 V, without disabling discharge. The
 advertised CCL/DCL values remain visible for diagnostics, while effective
 limits and Victron BMS permissions reflect these status overrides.
 
