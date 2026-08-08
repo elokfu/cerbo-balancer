@@ -4,23 +4,27 @@
 It discovers Dyness/Pylon addresses 2–16 and sends only read requests:
 
 - CID2 `0x42`: per-battery cells, temperatures, current, and voltage.
-- CID2 `0x61`: system voltage and SOC cross-check.
-- CID2 `0x63`: charge/discharge voltage, CCL, DCL, and status.
+- CID2 `0x61`: complete system summary, including system current, SOC, cell
+  summary, and cell/MOSFET/BMS temperatures.
+- CID2 `0x63`: charge/discharge voltage, CCL, DCL, and permission/state bits.
 
 The CID2 `0x63` status byte is decoded and retained as `limits.statusFlags`.
-Bits are mapped as follows: bit 0 cell under-voltage, bit 1 cell
-over-voltage, bit 2 under-temperature, bit 3 over-temperature, bit 4
-discharge over-current, bit 5 charge over-current, bit 6 CCL active, and bit 7
-OVP/protection active. The raw byte remains in `statusRaw`; active flags include
-their bit number and description.
+The correct Pylon/Dyness meanings are: bit 7 charge enabled, bit 6 discharge
+enabled, bit 5 strong charge, and bit 4 full charge. Bits 0–3 are retained as
+`unknownReservedBits` and are displayed as reserved; they do not create
+invented alarms or protection states. The raw byte remains in `statusRaw`.
 
-Safety handling is conservative: cell over-voltage, cold/hot warnings, charge
-over-current, and protection block charging; cell under-voltage and discharge
-over-current block discharge. Temperature warnings also force the thermal
-factor to zero, without disabling discharge; OVP/protection clamps the
-charge-voltage ceiling to 53.0 V, without disabling discharge. The
-advertised CCL/DCL values remain visible for diagnostics, while effective
-limits and Victron BMS permissions reflect these status overrides.
+The virtual BMS uses the permission bits for `/Bms/AllowToCharge` and
+`/Bms/AllowToDischarge`, together with the advertised current limits. A zero
+CCL is valid and means charging is not permitted; it is not treated as a
+disconnect. The management page displays all four permission/state bits and
+the reserved low bits.
+
+CID2 `0x61` temperatures are range-validated before publication. Sentinel
+values such as `0xFFFF` and decoded values outside -40 to 100 °C become
+unavailable and are never displayed. The maintenance page explicitly shows
+the valid average, minimum, and maximum BMS temperatures; per-battery sensor
+temperatures remain sourced from CID2 `0x42`.
 
 The adapter is optional during development. A root-supervised runit wrapper
 owns `ttyUSB0`, invokes Venus' official `stop-tty.sh ttyUSB0` handoff, and

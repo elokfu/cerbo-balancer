@@ -4,10 +4,12 @@ The controller page is `/dashboard/balancer`. The maintenance page is
 `/dashboard/balancer-maintenance` and refreshes its telemetry snapshot every
 five seconds while the RS485 poller runs every two seconds.
 
-The maintenance view exposes CID2 `0x61` system voltage/SOC, CID2 `0x63`
-limits and status, responding addresses, per-battery voltage and signed
+The maintenance view exposes CID2 `0x61` system voltage/SOC and validated BMS
+temperature range, CID2 `0x63` limits and permission/state bits, responding addresses, per-battery voltage and signed
 current, per-battery and all-pack cell spread, cell voltages, voltage sums and
 deltas, and every temperature sensor with min/max/average and interpretation.
+Unphysical CID2 `0x61` sentinel values such as `0xFFFF` temperatures are
+displayed as `—` and are not used for control.
 It also shows active addresses, pending-removal batteries, missed-scan counts,
 the current 60-second or 10-second discovery schedule, serial ownership,
 reconnect count, poll duration, and the latest classified communication error.

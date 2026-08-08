@@ -99,24 +99,33 @@ def signed16(value: int) -> int:
     return value - 0x10000 if value & 0x8000 else value
 
 
+def u8(data: bytes, offset: int) -> int:
+    return data[offset]
+
+
+def u16be(data: bytes, offset: int) -> int:
+    return int.from_bytes(data[offset:offset + 2], "big", signed=False)
+
+
+def s16be(data: bytes, offset: int) -> int:
+    return int.from_bytes(data[offset:offset + 2], "big", signed=True)
+
+
 STATUS_FLAGS = {
-    0: ("cellUnderVoltageWarning", "cell under-voltage warning"),
-    1: ("cellOverVoltageWarning", "cell over-voltage warning"),
-    2: ("underTemperatureWarning", "under-temperature warning"),
-    3: ("overTemperatureWarning", "over-temperature warning"),
-    4: ("dischargeOverCurrentWarning", "discharge over-current warning"),
-    5: ("chargeOverCurrentWarning", "charge over-current warning"),
-    6: ("cclActive", "CCL active"),
-    7: ("protectionActive", "OVP/protection active"),
+    7: ("chargeEnabled", "charge enabled"),
+    6: ("dischargeEnabled", "discharge enabled"),
+    5: ("strongCharge", "strong charge"),
+    4: ("fullCharge", "full charge"),
 }
 
 
 def decode_status(status: int) -> dict[str, Any]:
-    """Decode the Dyness BMS master status byte without losing the raw value."""
+    """Decode CID2=63 permission/state bits without inventing alarms."""
     flags = {
         name: bool(status & (1 << bit))
         for bit, (name, _description) in STATUS_FLAGS.items()
     }
+    reserved = status & 0x0F
     return {
         **flags,
         "active": [
@@ -124,9 +133,90 @@ def decode_status(status: int) -> dict[str, Any]:
             for bit, (name, description) in STATUS_FLAGS.items()
             if flags[name]
         ],
-        "severity": "protection" if flags["protectionActive"]
-        else "warning" if any(flags.values()) else "normal",
+        "unknownReservedBits": reserved,
+        "unknownReservedHex": f"0x{reserved:X}",
+        "state": "permissions",
     }
+
+
+def _temperature(raw: int) -> float | None:
+    value = raw / 10.0 - 273.15
+    return value if -40.0 <= value <= 100.0 else None
+
+
+def _percent(raw: int) -> int | None:
+    return raw if 0 <= raw <= 100 else None
+
+
+def _cycle_count(raw: int) -> int | None:
+    return raw if raw != 0xFFFF else None
+
+
+def _cell_voltage(raw: int) -> float | None:
+    value = raw / 1000.0
+    return value if 2.0 <= value <= 4.5 else None
+
+
+@dataclass
+class SystemTelemetry61:
+    voltage: float | None
+    current: float | None
+    soc: int | None
+    average_cycle_count: int | None
+    maximum_cycle_count: int | None
+    average_soh: int | None
+    minimum_soh: int | None
+    maximum_cell_voltage: float | None
+    maximum_cell_id: int | None
+    minimum_cell_voltage: float | None
+    minimum_cell_id: int | None
+    average_cell_temperature: float | None
+    maximum_cell_temperature: float | None
+    maximum_cell_temperature_id: int | None
+    minimum_cell_temperature: float | None
+    minimum_cell_temperature_id: int | None
+    average_mosfet_temperature: float | None
+    maximum_mosfet_temperature: float | None
+    maximum_mosfet_temperature_id: int | None
+    minimum_mosfet_temperature: float | None
+    minimum_mosfet_temperature_id: int | None
+    average_bms_temperature: float | None
+    maximum_bms_temperature: float | None
+    maximum_bms_temperature_id: int | None
+    minimum_bms_temperature: float | None
+    minimum_bms_temperature_id: int | None
+    trailing_hex: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "voltage61": self.voltage,
+            "current61": self.current,
+            "soc61": self.soc,
+            "averageCycleCount61": self.average_cycle_count,
+            "maximumCycleCount61": self.maximum_cycle_count,
+            "averageSoh61": self.average_soh,
+            "minimumSoh61": self.minimum_soh,
+            "maximumCellVoltage61": self.maximum_cell_voltage,
+            "maximumCellId61": self.maximum_cell_id,
+            "minimumCellVoltage61": self.minimum_cell_voltage,
+            "minimumCellId61": self.minimum_cell_id,
+            "averageCellTemperature61": self.average_cell_temperature,
+            "maximumCellTemperature61": self.maximum_cell_temperature,
+            "maximumCellTemperatureId61": self.maximum_cell_temperature_id,
+            "minimumCellTemperature61": self.minimum_cell_temperature,
+            "minimumCellTemperatureId61": self.minimum_cell_temperature_id,
+            "averageMosfetTemperature61": self.average_mosfet_temperature,
+            "maximumMosfetTemperature61": self.maximum_mosfet_temperature,
+            "maximumMosfetTemperatureId61": self.maximum_mosfet_temperature_id,
+            "minimumMosfetTemperature61": self.minimum_mosfet_temperature,
+            "minimumMosfetTemperatureId61": self.minimum_mosfet_temperature_id,
+            "averageBmsTemperature61": self.average_bms_temperature,
+            "maximumBmsTemperature61": self.maximum_bms_temperature,
+            "maximumBmsTemperatureId61": self.maximum_bms_temperature_id,
+            "minimumBmsTemperature61": self.minimum_bms_temperature,
+            "minimumBmsTemperatureId61": self.minimum_bms_temperature_id,
+            "trailingHex61": self.trailing_hex,
+        }
 
 
 @dataclass
@@ -246,6 +336,50 @@ def parse_pack_telemetry(frame: str, address: int) -> BatteryTelemetry:
         validation_errors=errors,
         raw_info=info,
         trailing_info=trailing_info,
+    )
+
+
+def parse_system_61(frame: str) -> SystemTelemetry61:
+    """Parse the validated 49-byte CID2=61 system summary.
+
+    Dyness/Pylon devices may use ``0xFFFF`` for unavailable counters and
+    temperatures.  Those sentinels, and any temperature outside a physical
+    BMS range, are returned as ``None`` instead of being displayed as values.
+    """
+    info = parse_response(frame, 2, 0x61)["infoAscii"]
+    data = bytes.fromhex(info)
+    if len(data) < 49:
+        raise ValueError(f"CID2=61 INFO too short: got {len(data)} bytes")
+    return SystemTelemetry61(
+        voltage=(u16be(data, 0) / 1000.0
+                 if 40.0 <= u16be(data, 0) / 1000.0 <= 70.0 else None),
+        current=(s16be(data, 2) / 100.0
+                 if abs(s16be(data, 2) / 100.0) <= 1000.0 else None),
+        soc=_percent(u8(data, 4)),
+        average_cycle_count=_cycle_count(u16be(data, 5)),
+        maximum_cycle_count=_cycle_count(u16be(data, 7)),
+        average_soh=_percent(u8(data, 9)),
+        minimum_soh=_percent(u8(data, 10)),
+        maximum_cell_voltage=_cell_voltage(u16be(data, 11)),
+        maximum_cell_id=u16be(data, 13) if u16be(data, 11) != 0xFFFF else None,
+        minimum_cell_voltage=_cell_voltage(u16be(data, 15)),
+        minimum_cell_id=u16be(data, 17) if u16be(data, 15) != 0xFFFF else None,
+        average_cell_temperature=_temperature(u16be(data, 19)),
+        maximum_cell_temperature=_temperature(u16be(data, 21)),
+        maximum_cell_temperature_id=u16be(data, 23) if _temperature(u16be(data, 21)) is not None else None,
+        minimum_cell_temperature=_temperature(u16be(data, 25)),
+        minimum_cell_temperature_id=u16be(data, 27) if _temperature(u16be(data, 25)) is not None else None,
+        average_mosfet_temperature=_temperature(u16be(data, 29)),
+        maximum_mosfet_temperature=_temperature(u16be(data, 31)),
+        maximum_mosfet_temperature_id=u16be(data, 33) if _temperature(u16be(data, 31)) is not None else None,
+        minimum_mosfet_temperature=_temperature(u16be(data, 35)),
+        minimum_mosfet_temperature_id=u16be(data, 37) if _temperature(u16be(data, 35)) is not None else None,
+        average_bms_temperature=_temperature(u16be(data, 39)),
+        maximum_bms_temperature=_temperature(u16be(data, 41)),
+        maximum_bms_temperature_id=u16be(data, 43) if _temperature(u16be(data, 41)) is not None else None,
+        minimum_bms_temperature=_temperature(u16be(data, 45)),
+        minimum_bms_temperature_id=u16be(data, 47) if _temperature(u16be(data, 45)) is not None else None,
+        trailing_hex=data[49:].hex().upper(),
     )
 
 

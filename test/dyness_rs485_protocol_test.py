@@ -8,6 +8,7 @@ from dyness_rs485_protocol import (  # noqa: E402
     checksum,
     decode_status,
     length_field,
+    parse_system_61,
     parse_limits,
     parse_pack_telemetry,
     parse_system_soc,
@@ -59,18 +60,42 @@ class DynessProtocolTests(unittest.TestCase):
         self.assertEqual(parsed.charge_current_raw, 56)
         self.assertAlmostEqual(parsed.discharge_current_signed, 20.0)
 
-    def test_status_byte_decodes_all_dyness_master_flags(self):
+    def test_system_summary_discards_unphysical_temperatures_and_sentinels(self):
+        data = bytearray(49)
+        data[0:2] = (54480).to_bytes(2, "big")
+        data[2:4] = (10).to_bytes(2, "big", signed=True)
+        data[4] = 100
+        data[5:7] = (0xFFFF).to_bytes(2, "big")
+        data[7:9] = (0xFFFF).to_bytes(2, "big")
+        data[9] = 100
+        data[10] = 255
+        data[11:13] = (3524).to_bytes(2, "big")
+        data[13:15] = (1794).to_bytes(2, "big")
+        data[15:17] = (3342).to_bytes(2, "big")
+        data[17:19] = (2818).to_bytes(2, "big")
+        for offset, raw in ((19, 0xFFFF), (21, 2995), (25, 2990),
+                            (29, 0xFFFF), (31, 3015), (35, 0xFFFF),
+                            (39, 0xFFFF), (41, 3073), (45, 3073)):
+            data[offset:offset + 2] = raw.to_bytes(2, "big")
+        for offset, value in ((23, 1026), (27, 514), (33, 258),
+                              (37, 0xFFFF), (43, 258), (47, 258)):
+            data[offset:offset + 2] = value.to_bytes(2, "big")
+        parsed = parse_system_61(response(2, 0x61, data.hex().upper()))
+        self.assertAlmostEqual(parsed.voltage, 54.48)
+        self.assertEqual(parsed.average_cycle_count, None)
+        self.assertEqual(parsed.minimum_soh, None)
+        self.assertIsNone(parsed.average_cell_temperature)
+        self.assertAlmostEqual(parsed.maximum_bms_temperature, 34.15, places=2)
+        self.assertAlmostEqual(parsed.minimum_bms_temperature, 34.15, places=2)
+
+    def test_status_byte_decodes_permission_state_bits(self):
         status = decode_status(0xFF)
-        self.assertTrue(status["cellUnderVoltageWarning"])
-        self.assertTrue(status["cellOverVoltageWarning"])
-        self.assertTrue(status["underTemperatureWarning"])
-        self.assertTrue(status["overTemperatureWarning"])
-        self.assertTrue(status["dischargeOverCurrentWarning"])
-        self.assertTrue(status["chargeOverCurrentWarning"])
-        self.assertTrue(status["cclActive"])
-        self.assertTrue(status["protectionActive"])
-        self.assertEqual(status["severity"], "protection")
-        self.assertEqual(len(status["active"]), 8)
+        self.assertTrue(status["chargeEnabled"])
+        self.assertTrue(status["dischargeEnabled"])
+        self.assertTrue(status["strongCharge"])
+        self.assertTrue(status["fullCharge"])
+        self.assertEqual(status["unknownReservedBits"], 0x0F)
+        self.assertEqual(len(status["active"]), 4)
 
     def test_non_ascii_frame_is_rejected_before_text_parsing(self):
         valid = response(2, 0x61, "D00000005A").encode("ascii")

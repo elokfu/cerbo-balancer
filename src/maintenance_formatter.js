@@ -51,18 +51,33 @@ msg.payload = {
         lastError: health.lastError || current.reason || 'none',
         lastErrorType: health.lastErrorType || 'none'
     },
-    system: { voltage: number(system.voltage61), soc: number(system.soc61, 1) },
+    system: {
+        voltage: number(system.voltage61),
+        current: number(system.current61, 1),
+        soc: number(system.soc61, 1),
+        bmsTemperature: {
+            average: number(system.averageBmsTemperature61, 1),
+            minimum: number(system.minimumBmsTemperature61, 1),
+            maximum: number(system.maximumBmsTemperature61, 1)
+        }
+    },
     limits: {
         chargeVoltage: number(limits.chargeVoltage),
         dischargeVoltage: number(limits.dischargeVoltage),
         ccl: number(limits.chargeCurrent, 1),
         dcl: number(limits.dischargeCurrentSigned, 1),
         status: limits.statusRaw == null ? '—' : `0x${Number(limits.statusRaw).toString(16).toUpperCase().padStart(2, '0')}`,
-        statusSeverity: limits.statusFlags?.severity || 'unknown',
+        statusState: limits.statusFlags?.state || 'unknown',
         statusActive: Array.isArray(limits.statusFlags?.active)
             ? limits.statusFlags.active.map((item) => item.description || item.name)
             : [],
-        statusFlags: limits.statusFlags || {}
+        statusFlags: limits.statusFlags || {
+            chargeEnabled: null,
+            dischargeEnabled: null,
+            strongCharge: null,
+            fullCharge: null,
+            unknownReservedBits: null
+        }
     },
     discovery: {
         count: discovery.respondingCount || 0,

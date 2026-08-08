@@ -106,7 +106,7 @@ class DynessServiceTests(unittest.TestCase):
         self.assertEqual(result["effectiveChargeVoltage"], 56.4)
         self.assertEqual(result["effectiveChargeCurrent"], 28.0)
 
-    def test_bms_status_warnings_block_the_affected_direction(self):
+    def test_bms_permissions_block_the_affected_direction(self):
         snapshot = {
             "valid": True,
             "batteries": [{"temperatures": [25.0]}],
@@ -115,9 +115,8 @@ class DynessServiceTests(unittest.TestCase):
                 "chargeCurrent": 56.0,
                 "dischargeCurrentSigned": -198.8,
                 "statusFlags": {
-                    "cellOverVoltageWarning": True,
-                    "dischargeOverCurrentWarning": True,
-                    "severity": "warning",
+                    "chargeEnabled": False,
+                    "dischargeEnabled": False,
                 },
             },
         }
@@ -135,7 +134,7 @@ class DynessServiceTests(unittest.TestCase):
                 "chargeVoltage": 56.5,
                 "chargeCurrent": 56.0,
                 "dischargeCurrentSigned": -198.8,
-                "statusFlags": {"protectionActive": True, "severity": "protection"},
+                "statusFlags": {"chargeEnabled": False, "dischargeEnabled": True},
             },
         }
         result = effective_control(snapshot, None)
@@ -143,15 +142,15 @@ class DynessServiceTests(unittest.TestCase):
         self.assertEqual(result["effectiveChargeCurrent"], 0.0)
         self.assertEqual(result["effectiveDischargeCurrent"], 198.8)
 
-    def test_temperature_warning_stops_charge_but_preserves_discharge(self):
+    def test_hot_battery_stops_charge_but_preserves_discharge(self):
         snapshot = {
             "valid": True,
-            "batteries": [{"temperatures": [25.0]}],
+            "batteries": [{"temperatures": [55.0]}],
             "limits": {
                 "chargeVoltage": 56.5,
                 "chargeCurrent": 56.0,
                 "dischargeCurrentSigned": -198.8,
-                "statusFlags": {"overTemperatureWarning": True, "severity": "warning"},
+                "statusFlags": {"chargeEnabled": True, "dischargeEnabled": True},
             },
         }
         result = effective_control(snapshot, None)

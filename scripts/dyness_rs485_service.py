@@ -27,9 +27,7 @@ except ImportError:  # pragma: no cover - exercised on a non-Cerbo host
 from dyness_rs485_protocol import (
     parse_limits,
     parse_pack_telemetry,
-    parse_response,
-    parse_system_soc,
-    parse_system_voltage,
+    parse_system_61,
     request,
 )
 
@@ -129,16 +127,8 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
     bms_ccl = max(0.0, float(limits.get("chargeCurrent", 0.0))) if valid else 0.0
     bms_dcl = abs(float(limits.get("dischargeCurrentSigned", 0.0))) if valid else 0.0
     factor = thermal_factor(snapshot)
-    charge_blocked = any(status_flags.get(name, False) for name in (
-        "cellOverVoltageWarning", "underTemperatureWarning",
-        "overTemperatureWarning", "chargeOverCurrentWarning",
-        "protectionActive",
-    ))
-    discharge_blocked = any(status_flags.get(name, False) for name in (
-        "cellUnderVoltageWarning", "dischargeOverCurrentWarning",
-    ))
-    if status_flags.get("underTemperatureWarning") or status_flags.get("overTemperatureWarning"):
-        factor = 0.0
+    charge_blocked = status_flags.get("chargeEnabled") is False
+    discharge_blocked = status_flags.get("dischargeEnabled") is False
     if charge_blocked:
         bms_ccl = 0.0
     if discharge_blocked:
@@ -151,7 +141,7 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
     return {
         "mode": "ACTIVE" if fresh_command and valid else "TEST",
         "commandFresh": fresh_command,
-        "effectiveChargeVoltage": min(requested_voltage, bms_cvl, 53.0 if status_flags.get("protectionActive") else 56.5) if valid else 53.0,
+        "effectiveChargeVoltage": min(requested_voltage, bms_cvl, 53.0 if charge_blocked else 56.5) if valid else 53.0,
         "effectiveChargeCurrent": min(requested_current, bms_ccl, 100.0) * factor if valid else 0.0,
         "effectiveDischargeCurrent": bms_dcl,
         "thermalFactor": factor,
@@ -406,12 +396,18 @@ class ReadOnlyPoller:
             limits_frame = self.query(port, 2, 0x63)
             batteries = []
             raw_frames = []
+            system_values: dict[str, Any] = {
+                "voltage61": None,
+                "current61": None,
+                "soc61": None,
+            }
             system_voltage = system_soc = None
             errors = []
             if system:
                 try:
-                    parse_response(system, 2, 0x61)
-                    system_voltage, system_soc = parse_system_voltage(system), parse_system_soc(system)
+                    parsed_system = parse_system_61(system)
+                    system_values = parsed_system.as_dict()
+                    system_voltage, system_soc = parsed_system.voltage, parsed_system.soc
                     raw_frames.append({"cid2": "61", "address": 2, "frame": system.decode("ascii")})
                 except ValueError as error:
                     errors.append(f"CID2=61: {error}")
@@ -456,7 +452,7 @@ class ReadOnlyPoller:
                 "timestamp": now_ms(), "telemetryAge": 0, "valid": bool(system_voltage is not None and limits and all_expected_valid),
                 "source": "rs485-dyness", "serialPort": self.port_name, "baud": self.baud,
                 "reason": "; ".join(errors) if errors else None,
-                "system": {"voltage61": system_voltage, "soc61": system_soc}, "limits": limits,
+                "system": system_values, "limits": limits,
                 "discovery": {"scannedAddresses": list(addresses),
                 "respondingAddresses": [item["address"] for item in batteries], "respondingCount": len(batteries),
                 "scanType": "full" if discovery_due else "active"},
@@ -582,14 +578,12 @@ class DbusPublisher:
                 "/Bms/AllowToCharge": dbus.Boolean(False),
                 "/Bms/AllowToDischarge": dbus.Boolean(False),
                 "/Bms/StatusRaw": dbus.UInt32(0),
-                "/Bms/Status": dbus.String("normal"),
-                "/Alarms/LowVoltage": dbus.Boolean(False),
-                "/Alarms/HighVoltage": dbus.Boolean(False),
-                "/Alarms/LowTemperature": dbus.Boolean(False),
-                "/Alarms/HighTemperature": dbus.Boolean(False),
-                "/Alarms/HighChargeCurrent": dbus.Boolean(False),
-                "/Alarms/HighDischargeCurrent": dbus.Boolean(False),
-                "/Alarms/BmsAlarm": dbus.Boolean(False),
+                "/Bms/Status": dbus.String("permissions"),
+                "/Bms/ChargeEnabled": dbus.Boolean(False),
+                "/Bms/DischargeEnabled": dbus.Boolean(False),
+                "/Bms/StrongCharge": dbus.Boolean(False),
+                "/Bms/FullCharge": dbus.Boolean(False),
+                "/Bms/UnknownStatusBits": dbus.UInt32(0),
                 "/Connected": dbus.Boolean(False),
                 "/State": dbus.String("RS485 unavailable"),
             }
@@ -611,7 +605,6 @@ class DbusPublisher:
         control = snapshot.get("effectiveControl") or {}
         status_flags = limits.get("statusFlags") or {}
         status_active = status_flags.get("active") or []
-        status_severity = status_flags.get("severity", "normal")
         voltage = system.get("voltage61") if snapshot.get("valid") else 53.0
         current = aggregate.get("summedBatteryCurrent") if snapshot.get("valid") else 0.0
         ccl = control.get("effectiveChargeCurrent") if snapshot.get("valid") else 0.0
@@ -625,21 +618,18 @@ class DbusPublisher:
             "/Info/MaxChargeVoltage": dbus.Double(float(cvl or 53.0)),
             "/Info/MaxChargeCurrent": dbus.Double(float(ccl or 0.0)),
             "/Info/MaxDischargeCurrent": dbus.Double(float(dcl or 0.0)),
-            "/Bms/AllowToCharge": dbus.Boolean(bool(snapshot.get("valid") and ccl is not None and ccl > 0 and not control.get("chargeBlockedByStatus"))),
-            "/Bms/AllowToDischarge": dbus.Boolean(bool(snapshot.get("valid") and dcl is not None and dcl > 0 and not control.get("dischargeBlockedByStatus"))),
+            "/Bms/AllowToCharge": dbus.Boolean(bool(snapshot.get("valid") and ccl is not None and ccl > 0 and status_flags.get("chargeEnabled") is True and not control.get("chargeBlockedByStatus"))),
+            "/Bms/AllowToDischarge": dbus.Boolean(bool(snapshot.get("valid") and dcl is not None and dcl > 0 and status_flags.get("dischargeEnabled") is True and not control.get("dischargeBlockedByStatus"))),
             "/Bms/StatusRaw": dbus.UInt32(int(limits.get("statusRaw") or 0)),
-            "/Bms/Status": dbus.String(status_severity),
-            "/Alarms/LowVoltage": dbus.Boolean(bool(status_flags.get("cellUnderVoltageWarning"))),
-            "/Alarms/HighVoltage": dbus.Boolean(bool(status_flags.get("cellOverVoltageWarning"))),
-            "/Alarms/LowTemperature": dbus.Boolean(bool(status_flags.get("underTemperatureWarning"))),
-            "/Alarms/HighTemperature": dbus.Boolean(bool(status_flags.get("overTemperatureWarning"))),
-            "/Alarms/HighChargeCurrent": dbus.Boolean(bool(status_flags.get("chargeOverCurrentWarning"))),
-            "/Alarms/HighDischargeCurrent": dbus.Boolean(bool(status_flags.get("dischargeOverCurrentWarning"))),
-            "/Alarms/BmsAlarm": dbus.Boolean(bool(status_flags.get("protectionActive"))),
+            "/Bms/Status": dbus.String("permissions"),
+            "/Bms/ChargeEnabled": dbus.Boolean(bool(status_flags.get("chargeEnabled"))),
+            "/Bms/DischargeEnabled": dbus.Boolean(bool(status_flags.get("dischargeEnabled"))),
+            "/Bms/StrongCharge": dbus.Boolean(bool(status_flags.get("strongCharge"))),
+            "/Bms/FullCharge": dbus.Boolean(bool(status_flags.get("fullCharge"))),
+            "/Bms/UnknownStatusBits": dbus.UInt32(int(status_flags.get("unknownReservedBits") or 0)),
             "/Connected": dbus.Boolean(bool(snapshot.get("valid"))),
             "/State": dbus.String(
-                "BMS protection active" if status_flags.get("protectionActive")
-                else ", ".join(item["description"] for item in status_active)
+                ", ".join(item["description"] for item in status_active)
                 if status_active else "Valid RS485 telemetry" if snapshot.get("valid")
                 else snapshot.get("reason") or "RS485 unavailable"
             ),

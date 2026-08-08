@@ -29,8 +29,17 @@ const valid = {
     dischargeVoltage: 48,
     chargeCurrent: 0,
     dischargeCurrentSigned: -198.8,
-    statusRaw: 0,
-    statusFlags: { severity: 'normal', active: [] }
+    statusRaw: 64,
+    statusFlags: {
+      state: 'permissions',
+      chargeEnabled: false,
+      dischargeEnabled: true,
+      strongCharge: false,
+      fullCharge: false,
+      unknownReservedBits: 0,
+      unknownReservedHex: '0x0',
+      active: [{ description: 'discharge enabled' }]
+    }
   },
   aggregate: { vmin: 3.346, vmax: 3.582, spread: 0.236 },
   batteries: [],
@@ -42,8 +51,9 @@ const live = format(valid, null, 100000)
 assert.equal(live.displayState, 'LIVE')
 assert.equal(live.system.voltage, '54.840')
 assert.equal(live.valid, true)
-assert.equal(live.limits.status, '0x00')
-assert.deepEqual(live.limits.statusActive, [])
+assert.equal(live.limits.status, '0x40')
+assert.deepEqual(live.limits.statusActive, ['discharge enabled'])
+assert.equal(live.limits.statusFlags.chargeEnabled, false)
 
 const stale = format({ ...valid, timestamp: 101000, valid: false, reason: 'CID2=63 timeout' }, valid, 105000)
 assert.equal(stale.displayState, 'STALE')
