@@ -207,6 +207,30 @@ class DynessServiceTests(unittest.TestCase):
         self.assertEqual(result["effectiveChargeCurrent"], 0.0)
         self.assertEqual(result["effectiveDischargeCurrent"], 198.8)
 
+    def test_active_controller_can_inhibit_charge_without_affecting_discharge(self):
+        snapshot = {
+            "valid": True,
+            "batteries": [{"temperatures": [25.0]}],
+            "limits": {
+                "chargeVoltage": 56.5,
+                "chargeCurrent": 56.0,
+                "dischargeCurrentSigned": -198.8,
+                "statusFlags": {"chargeEnabled": True, "dischargeEnabled": True},
+            },
+        }
+        command = {
+            "mode": "ACTIVE",
+            "timestamp": __import__("time").time_ns() // 1_000_000,
+            "requestedVoltage": 56.5,
+            "requestedCurrent": 0.0,
+            "chargeEnabled": False,
+            "reason": "BALANCE_DISCHARGE_RECOVERY",
+        }
+        result = effective_control(snapshot, command)
+        self.assertEqual(result["effectiveChargeCurrent"], 0.0)
+        self.assertTrue(result["chargeBlockedByController"])
+        self.assertEqual(result["effectiveDischargeCurrent"], 198.8)
+
     def test_store_creates_runtime_files_without_credentials(self):
         with tempfile.TemporaryDirectory() as directory:
             store = JsonlStore(directory)

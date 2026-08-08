@@ -1,19 +1,21 @@
 ## Dyness Balancer
 
-**TEST** is the startup mode. TEST calculates the shadow pack-voltage
-command, feed-forward term, PI terms, safety overrides, and BMS-limit
-arbitration, but performs no voltage write.
+**TEST** is the startup mode. TEST calculates selected-battery current PI,
+SOC hysteresis, Vmax/CCL stops, discharge recovery, and BMS-limit arbitration,
+but performs no DVCC or charger write.
 
 **ACTIVE** is guarded by the controller. It requires fresh and independently
-validated cell telemetry, valid configuration, configured PI gains, and
-verified output readback. The current direct-CAN adapter remains unavailable
-until cell values are validated; therefore ACTIVE should remain locked out.
+validated cell telemetry, valid configuration, and verified output readback.
+Physical activation additionally requires the separate DVCC commissioning
+approval.
 
 The controller is enabled only when explicitly selected. `AUTO` evaluates
-equalization entry and completion; `MANUAL` uses Start/Stop. Safety handling
-and stale-input protection apply in every mode.
+automatic balancing entry and completion; `MANUAL` uses Start/Stop. New
+automatic sequences require SOC above 98%; a selected sequence continues above
+97% and exits at or below 97%. Safety handling and stale-input protection apply
+in every mode.
 
 The displayed spread is Vmax minus Vmin. Cell indexes are only shown as
 validated values. Raw CAN frames and decoder health are retained for
-diagnostics. A CCL of zero is logged as an advertised limit and is not treated
-as a disconnected battery by itself.
+diagnostics. A CCL of zero is not treated as a disconnected battery, but it
+does stop an active balancing charge interval and enters discharge recovery.

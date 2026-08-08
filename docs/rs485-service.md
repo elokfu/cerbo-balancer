@@ -31,8 +31,10 @@ invented alarms or protection states. The raw byte remains in `statusRaw`.
 The virtual BMS uses the permission bits for `/Bms/AllowToCharge` and
 `/Bms/AllowToDischarge`, together with the advertised current limits. A zero
 CCL is valid and means charging is not permitted; it is not treated as a
-disconnect. The management page displays all four permission/state bits and
-the reserved low bits.
+disconnect. In a fresh ACTIVE controller command, `chargeEnabled=false`
+additionally clamps charge current to zero and `/Bms/AllowToCharge` false,
+without changing Dyness discharge permission or DCL. The management page
+displays all four permission/state bits and the reserved low bits.
 
 CID2 `0x61` temperatures are range-validated before publication. Sentinel
 values such as `0xFFFF` and decoded values outside -40 to 100 °C become

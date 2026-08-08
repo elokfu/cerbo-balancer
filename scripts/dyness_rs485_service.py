@@ -140,6 +140,9 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
     fresh_command = bool(command_age is not None and 0 <= command_age <= 5000)
     requested_voltage = float(active_command.get("requestedVoltage", 55.2)) if fresh_command else 55.2
     requested_current = float(active_command.get("requestedCurrent", 100.0)) if fresh_command else 100.0
+    controller_charge_enabled = bool(active_command.get("chargeEnabled", True)) if fresh_command else True
+    if not controller_charge_enabled:
+        requested_current = 0.0
     return {
         "mode": "ACTIVE" if fresh_command and valid else "TEST",
         "commandFresh": fresh_command,
@@ -149,6 +152,7 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
         "thermalFactor": factor,
         "statusFlags": status_flags,
         "chargeBlockedByStatus": charge_blocked,
+        "chargeBlockedByController": not controller_charge_enabled,
         "dischargeBlockedByStatus": discharge_blocked,
         "reason": None if valid else "RS485 telemetry invalid or stale",
     }
@@ -673,7 +677,7 @@ class DbusPublisher:
             "/Info/MaxChargeVoltage": dbus.Double(float(cvl or 53.0)),
             "/Info/MaxChargeCurrent": dbus.Double(float(ccl or 0.0)),
             "/Info/MaxDischargeCurrent": dbus.Double(float(dcl or 0.0)),
-            "/Bms/AllowToCharge": dbus.Boolean(bool(snapshot.get("valid") and ccl is not None and ccl > 0 and status_flags.get("chargeEnabled") is True and not control.get("chargeBlockedByStatus"))),
+            "/Bms/AllowToCharge": dbus.Boolean(bool(snapshot.get("valid") and ccl is not None and ccl > 0 and status_flags.get("chargeEnabled") is True and not control.get("chargeBlockedByStatus") and not control.get("chargeBlockedByController"))),
             "/Bms/AllowToDischarge": dbus.Boolean(bool(snapshot.get("valid") and dcl is not None and dcl > 0 and status_flags.get("dischargeEnabled") is True and not control.get("dischargeBlockedByStatus"))),
             "/Bms/StatusRaw": dbus.UInt32(int(limits.get("statusRaw") or 0)),
             "/Bms/Status": dbus.String("permissions"),

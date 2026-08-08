@@ -1,8 +1,8 @@
 # Cerbo Dyness Balancer
 
-Read-only Dyness/Pylon-compatible RS485 telemetry and a TEST-mode shadow
+Dyness/Pylon-compatible RS485 telemetry and a TEST-mode active-balancing
 controller for Cerbo GX. The RS485 adapter is polled at 115200 8N1 using only
-CID2 `0x42`, `0x61`, and `0x63` read requests.
+CID2 `0x42`, `0x44`, `0x61`, and `0x63` read requests.
 
 CID2 `0x42` is authoritative for each battery's cells, voltage, signed
 current, and temperatures. When 15 cells are returned, cell 16 is calculated
@@ -12,11 +12,17 @@ remains enabled and unchanged.
 
 ## Current commissioning boundary
 
-The flow runs in `TEST` mode. It emits simulated voltage/current intents to
-diagnostics and never writes a charger setting. ACTIVE is rejected until
-fresh, validated per-battery 16-cell telemetry, configuration, PI gains, and
-output readback are all valid. A disconnected adapter produces an explicit
-unavailable snapshot and conservative virtual-BMS values.
+The flow starts in `TEST` mode. It calculates the selected-battery 2 A current
+PI command, SOC hysteresis, Vmax stops, CCL-zero stops, and recovery decisions,
+but its command remains TEST-only and cannot modify DVCC or chargers. ACTIVE
+is still a commissioning gate: it requires fresh complete telemetry, a valid
+configuration, output readback, virtual-BMS selection, verified propagation to
+the MPPTs and MultiPlus, and separate explicit activation approval.
+
+Automatic selection starts only above 98% SOC and a selected sequence ends at
+97% SOC or below. A positive BMS CCL is always a physical ceiling; CCL zero
+stops charging and starts natural discharge recovery. The controller never
+uses direct charger D-Bus writes.
 
 Run locally:
 

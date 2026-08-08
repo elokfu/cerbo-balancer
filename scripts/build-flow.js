@@ -18,7 +18,6 @@ const flow = JSON.parse(template
   .replaceAll('reconstructed_cell_sum', 'reconstructedCellSum')
   .replaceAll('reconstructed_voltage_delta_mv', 'reconstructedVoltageDeltaMv')
   .replaceAll('validation_errors', 'validationErrors')
-  .replace("intent ? { topic: 'shadow_command', payload: JSON.stringify(intent) }", "intent ? { topic: 'controller_command', payload: JSON.stringify({ version: Date.now(), timestamp: Date.now(), mode: controller.getState().mode, requestedVoltage: intent.value, requestedCurrent: intent.command && intent.command.chargeCurrentCommand }) }" )
   .replace('__DASHBOARD_HELP__', JSON.stringify(help).slice(1, -1)))
 
 const controllerNode = flow.find(node => node.id === 'bal-controller')

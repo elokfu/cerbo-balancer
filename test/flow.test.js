@@ -16,6 +16,7 @@ assert.ok(flow.some(node => node.id === 'bal-rs485-read' && node.command.include
 assert.ok(flow.some(node => node.id === 'bal-rs485-refresh' && node.once === true && node.repeat === '2'))
 assert.ok(flow.some(node => node.id === 'bal-maint-tick' && node.repeat === '5'))
 assert.ok(flow.some(node => node.id === 'bal-controller'))
+assert.ok(flow.some(node => node.id === 'bal-controls' && node.type === 'ui-template'))
 assert.ok(text.includes('TEST_MODE'))
 assert.ok(text.includes('can1'))
 assert.ok(text.includes('cerbo-balancer-state.json'))

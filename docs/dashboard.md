@@ -37,10 +37,18 @@ old, measurement cards remain visible with a `STALE` banner. This is display
 only: the controller still treats the current telemetry as invalid and keeps
 ACTIVE blocked. After ten seconds, measurements are blanked.
 
-Mode starts at `TEST`. TEST calculates shadow pack-voltage/current commands but
-performs no charger or voltage write. ACTIVE is rejected unless fresh,
-independently validated per-battery cell telemetry, valid configuration, PI
-gains, and verified output readback are present.
+The controller page reports the selected battery, SOC entry/continuation gate,
+state, cycle count, stop reason, aggregate current command, and charge-enable
+intent. Automatic selection needs SOC above 98%; an active sequence continues
+above 97% and exits at or below 97%. It controls selected-battery current
+toward 2 A through aggregate DVCC current allowance, without assuming equal
+parallel current sharing.
+
+Mode starts at `TEST`. TEST calculates current-control and recovery commands
+but performs no charger or voltage write. ACTIVE remains rejected unless fresh
+complete telemetry, valid configuration, and verified output readback are
+present; physical activation additionally requires the documented DVCC
+commissioning approval.
 
 Mode starts at `TEST`. The ACTIVE control is intentionally rejected unless
 cell telemetry and output readback are verified. TEST commands are diagnostic
