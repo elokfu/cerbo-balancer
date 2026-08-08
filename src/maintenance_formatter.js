@@ -37,17 +37,19 @@ const status44View = (status) => {
         error: raw.error || (ageMs != null && ageMs > 10000 ? `last status ${Math.round(ageMs / 1000)} s ago` : 'status not available'),
         raw: `S1 ${byteHex(status1.raw)} · S2 ${byteHex(status2.raw)} · S3 ${byteHex(status3.raw)} · S4 ${byteHex(status4.raw)} · S5 ${byteHex(status5.raw)}`,
         chips: available ? [
-            chip('Charge MOS', onOff(status2.chargeMosfet), status2.chargeMosfet ? 'good' : 'neutral'),
-            chip('Discharge MOS', onOff(status2.dischargeMosfet), status2.dischargeMosfet ? 'good' : 'neutral'),
-            chip('Power', onOff(status2.modulePowerActive), status2.modulePowerActive ? 'good' : 'neutral'),
-            chip('Effective', `${onOff(status3.effectiveCharging)}/${onOff(status3.effectiveDischarging)}`, status3.effectiveCharging || status3.effectiveDischarging ? 'good' : 'neutral'),
+            chip('Charge MOSFET', onOff(status2.chargeMosfet), status2.chargeMosfet ? 'good' : 'neutral'),
+            chip('Discharge MOSFET', onOff(status2.dischargeMosfet), status2.dischargeMosfet ? 'good' : 'neutral'),
+            chip('Module power', onOff(status2.modulePowerActive), status2.modulePowerActive ? 'good' : 'neutral'),
+            chip('Effective charge/discharge', `${onOff(status3.effectiveCharging)}/${onOff(status3.effectiveDischarging)}`, status3.effectiveCharging || status3.effectiveDischarging ? 'good' : 'neutral'),
             ...(status2.prechargeMosfet ? [chip('Precharge', 'ON', 'warning')] : []),
             ...(status3.heaterActive ? [chip('Heater', 'ON', 'warning')] : [])
         ] : [],
         protection: noneOr(protections),
-        hardware: available ? `Precharge ${onOff(status2.prechargeMosfet)} · Charge MOS ${onOff(status2.chargeMosfet)} · Discharge MOS ${onOff(status2.dischargeMosfet)} · Power ${onOff(status2.modulePowerActive)}` : '—',
-        effective: available ? `Charging ${onOff(status3.effectiveCharging)} · Discharging ${onOff(status3.effectiveDischarging)} · Heater ${onOff(status3.heaterActive)} · Full ${onOff(status3.fullyCharged)} · Buzzer ${onOff(status3.buzzerActive)}` : '—',
-        cellFaults: available ? `Cells 1–8: ${noneOr(status4.cellFaults)} · Cells 9–16: ${noneOr(status5.cellFaults)}` : '—',
+        hardware: available ? `Precharge MOSFET ${onOff(status2.prechargeMosfet)} · Charge MOSFET ${onOff(status2.chargeMosfet)} · Discharge MOSFET ${onOff(status2.dischargeMosfet)} · Module power ${onOff(status2.modulePowerActive)}` : '—',
+        effective: available ? `Effective charging ${onOff(status3.effectiveCharging)} · Effective discharging ${onOff(status3.effectiveDischarging)} · Heater active ${onOff(status3.heaterActive)} · Fully charged ${onOff(status3.fullyCharged)} · Buzzer active ${onOff(status3.buzzerActive)}` : '—',
+        status4Faults: available ? noneOr(status4.cellFaults) : '—',
+        status5Faults: available ? noneOr(status5.cellFaults) : '—',
+        cellFaults: available ? `Status4, cells 1–8: ${noneOr(status4.cellFaults)} · Status5, cells 9–16: ${noneOr(status5.cellFaults)}` : '—',
         alarms: noneOr(alarmParts),
         reserved: available ? `S1 ${status1.reserved?.hex || '0x00'} · S2 ${status2.reserved?.hex || '0x00'} · S3 ${status3.reserved?.hex || '0x00'}` : '—'
     }

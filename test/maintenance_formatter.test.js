@@ -120,9 +120,10 @@ const statusLive = format({
 assert.equal(statusLive.batteries[0].status44.state, 'OK')
 assert.equal(statusLive.batteries[0].status44.stateClass, 'good')
 assert.equal(statusLive.batteries[0].status44.raw, 'S1 0x00 · S2 0x0F · S3 0xC9 · S4 0x00 · S5 0x00')
+assert.equal(statusLive.batteries[0].status44.chips[0].label, 'Charge MOSFET')
 assert.equal(statusLive.batteries[0].status44.chips[0].value, 'ON')
 assert.equal(statusLive.batteries[0].status44.protection, 'None')
-assert.equal(statusLive.batteries[0].status44.cellFaults, 'Cells 1–8: None · Cells 9–16: None')
+assert.equal(statusLive.batteries[0].status44.cellFaults, 'Status4, cells 1–8: None · Status5, cells 9–16: None')
 
 const statusWarn = format({
   ...valid,
@@ -144,7 +145,7 @@ const statusWarn = format({
 assert.equal(statusWarn.batteries[0].status44.state, 'WARN')
 assert.equal(statusWarn.batteries[0].status44.stateClass, 'bad')
 assert.equal(statusWarn.batteries[0].status44.protection, 'over-voltage protection')
-assert.equal(statusWarn.batteries[0].status44.cellFaults, 'Cells 1–8: 1 · Cells 9–16: None')
+assert.equal(statusWarn.batteries[0].status44.cellFaults, 'Status4, cells 1–8: 1 · Status5, cells 9–16: None')
 
 const statusUnavailable = format({
   ...valid,
