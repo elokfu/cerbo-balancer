@@ -1,6 +1,11 @@
 const current = flow.get('balancerRs485Snapshot') || {}
 const lastValid = flow.get('balancerRs485LastValidSnapshot') || null
 const number = (value, digits = 3) => typeof value === 'number' && Number.isFinite(value) ? value.toFixed(digits) : '—'
+const bounded = (value, minimum, maximum, digits = 3) => typeof value === 'number' && Number.isFinite(value) && value >= minimum && value <= maximum ? value.toFixed(digits) : '—'
+const count = (value) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value !== 65535 ? String(value) : '—'
+const percent = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100 ? value.toFixed(0) : '—'
+const temperature = (value) => bounded(value, -40, 100, 1)
+const identifier = (value, metric) => metric !== '—' && typeof value === 'number' && Number.isInteger(value) && value >= 0 && value !== 65535 ? String(value) : '—'
 const now = Date.now()
 const lastValidAgeMs = lastValid && typeof lastValid.timestamp === 'number' ? Math.max(0, now - lastValid.timestamp) : null
 const displaySnapshot = current.valid === true ? current : lastValidAgeMs != null && lastValidAgeMs <= 10000 ? lastValid : {}
@@ -11,6 +16,8 @@ const limits = displaySnapshot.limits || {}
 const discovery = current.discovery || displaySnapshot.discovery || {}
 const inventory = current.inventory || displaySnapshot.inventory || {}
 const health = current.serialHealth || displaySnapshot.serialHealth || {}
+const systemMaximumCellVoltage = bounded(system.maximumCellVoltage61, 2, 4.5)
+const systemMinimumCellVoltage = bounded(system.minimumCellVoltage61, 2, 4.5)
 
 const batteries = (displaySnapshot.batteries || []).map((battery) => {
     const cells = battery.effectiveCells || battery.effective_cells || []
@@ -52,13 +59,42 @@ msg.payload = {
         lastErrorType: health.lastErrorType || 'none'
     },
     system: {
-        voltage: number(system.voltage61),
-        current: number(system.current61, 1),
-        soc: number(system.soc61, 1),
+        voltage: bounded(system.voltage61, 40, 70),
+        current: bounded(system.current61, -1000, 1000, 1),
+        soc: percent(system.soc61),
+        averageCycleCount: count(system.averageCycleCount61),
+        maximumCycleCount: count(system.maximumCycleCount61),
+        averageSoh: percent(system.averageSoh61),
+        minimumSoh: percent(system.minimumSoh61),
+        cellSummary: {
+            maximumVoltage: systemMaximumCellVoltage,
+            maximumId: identifier(system.maximumCellId61, systemMaximumCellVoltage),
+            minimumVoltage: systemMinimumCellVoltage,
+            minimumId: identifier(system.minimumCellId61, systemMinimumCellVoltage),
+            spread: systemMaximumCellVoltage !== '—' && systemMinimumCellVoltage !== '—'
+                ? number(Number(systemMaximumCellVoltage) - Number(systemMinimumCellVoltage), 3)
+                : '—'
+        },
+        cellTemperature: {
+            average: temperature(system.averageCellTemperature61),
+            maximum: temperature(system.maximumCellTemperature61),
+            maximumId: identifier(system.maximumCellTemperatureId61, temperature(system.maximumCellTemperature61)),
+            minimum: temperature(system.minimumCellTemperature61),
+            minimumId: identifier(system.minimumCellTemperatureId61, temperature(system.minimumCellTemperature61))
+        },
+        mosfetTemperature: {
+            average: temperature(system.averageMosfetTemperature61),
+            maximum: temperature(system.maximumMosfetTemperature61),
+            maximumId: identifier(system.maximumMosfetTemperatureId61, temperature(system.maximumMosfetTemperature61)),
+            minimum: temperature(system.minimumMosfetTemperature61),
+            minimumId: identifier(system.minimumMosfetTemperatureId61, temperature(system.minimumMosfetTemperature61))
+        },
         bmsTemperature: {
-            average: number(system.averageBmsTemperature61, 1),
-            minimum: number(system.minimumBmsTemperature61, 1),
-            maximum: number(system.maximumBmsTemperature61, 1)
+            average: temperature(system.averageBmsTemperature61),
+            maximum: temperature(system.maximumBmsTemperature61),
+            maximumId: identifier(system.maximumBmsTemperatureId61, temperature(system.maximumBmsTemperature61)),
+            minimum: temperature(system.minimumBmsTemperature61),
+            minimumId: identifier(system.minimumBmsTemperatureId61, temperature(system.minimumBmsTemperature61))
         }
     },
     limits: {

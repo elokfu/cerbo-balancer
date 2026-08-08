@@ -8,6 +8,10 @@ The maintenance view exposes CID2 `0x61` system voltage/SOC and validated BMS
 temperature range, CID2 `0x63` limits and permission/state bits, responding addresses, per-battery voltage and signed
 current, per-battery and all-pack cell spread, cell voltages, voltage sums and
 deltas, and every temperature sensor with min/max/average and interpretation.
+The CID2 `0x61` System Summary groups electrical values, cycle/SOH health,
+cell extrema and IDs, cell temperatures, MOSFET temperatures, and BMS
+temperatures. IDs are shown beside valid measurements; trailing hex remains
+available only in raw telemetry and logs.
 Unphysical CID2 `0x61` sentinel values such as `0xFFFF` temperatures are
 displayed as `—` and are not used for control.
 It also shows active addresses, pending-removal batteries, missed-scan counts,
