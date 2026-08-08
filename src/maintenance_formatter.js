@@ -30,10 +30,35 @@ const status44View = (status) => {
     const state = !available ? 'UNAVAILABLE' : fault ? 'WARN' : 'OK'
     const stateClass = !available ? 'neutral' : fault ? 'bad' : 'good'
     const chip = (label, value, tone) => ({ label, value, tone })
+    const flag = (register, label, value, tone = value === 'ON' ? 'good' : 'neutral') => ({ register, label, value, tone })
+    const bit = (value, position) => Boolean((Number(value) || 0) & (1 << position))
+    const flags = available ? [
+        flag('Status1', 'Pack under-voltage protection', onOff(bit(status1.raw, 7)), bit(status1.raw, 7) ? 'bad' : 'neutral'),
+        flag('Status1', 'Charge-temperature protection', onOff(bit(status1.raw, 6)), bit(status1.raw, 6) ? 'bad' : 'neutral'),
+        flag('Status1', 'Discharge-temperature protection', onOff(bit(status1.raw, 5)), bit(status1.raw, 5) ? 'bad' : 'neutral'),
+        flag('Status1', 'Discharge over-current protection', onOff(bit(status1.raw, 4)), bit(status1.raw, 4) ? 'bad' : 'neutral'),
+        flag('Status1', 'Charge over-current protection', onOff(bit(status1.raw, 2)), bit(status1.raw, 2) ? 'bad' : 'neutral'),
+        flag('Status1', 'Cell under-voltage protection', onOff(bit(status1.raw, 1)), bit(status1.raw, 1) ? 'bad' : 'neutral'),
+        flag('Status1', 'Over-voltage protection', onOff(bit(status1.raw, 0)), bit(status1.raw, 0) ? 'bad' : 'neutral'),
+        flag('Status2', 'Precharge MOSFET', onOff(status2.prechargeMosfet)),
+        flag('Status2', 'Charge MOSFET', onOff(status2.chargeMosfet)),
+        flag('Status2', 'Discharge MOSFET', onOff(status2.dischargeMosfet)),
+        flag('Status2', 'Module power active', onOff(status2.modulePowerActive)),
+        flag('Status3', 'Effective charging', onOff(status3.effectiveCharging)),
+        flag('Status3', 'Effective discharging', onOff(status3.effectiveDischarging)),
+        flag('Status3', 'Heater active', onOff(status3.heaterActive), status3.heaterActive ? 'warning' : 'neutral'),
+        flag('Status3', 'Fully charged', onOff(status3.fullyCharged), status3.fullyCharged ? 'warning' : 'neutral'),
+        flag('Status3', 'Buzzer active', onOff(status3.buzzerActive), status3.buzzerActive ? 'warning' : 'neutral'),
+        flag('Status4', 'Cell voltage-check faults, cells 1–8', noneOr(status4.cellFaults), (status4.cellFaults || []).length ? 'bad' : 'neutral'),
+        flag('Status5', 'Cell voltage-check faults, cells 9–16', noneOr(status5.cellFaults), (status5.cellFaults || []).length ? 'bad' : 'neutral'),
+        flag('Alarms', 'Active alarms', noneOr(alarmParts), alarmParts.length ? 'bad' : 'neutral'),
+        flag('Reserved', 'Undefined/reserved bits', `S1 ${status1.reserved?.hex || '0x00'} · S2 ${status2.reserved?.hex || '0x00'} · S3 ${status3.reserved?.hex || '0x00'}`, 'neutral')
+    ] : []
     return {
         available,
         state,
         stateClass,
+        flags,
         error: raw.error || (ageMs != null && ageMs > 10000 ? `last status ${Math.round(ageMs / 1000)} s ago` : 'status not available'),
         raw: `S1 ${byteHex(status1.raw)} · S2 ${byteHex(status2.raw)} · S3 ${byteHex(status3.raw)} · S4 ${byteHex(status4.raw)} · S5 ${byteHex(status5.raw)}`,
         chips: available ? [
