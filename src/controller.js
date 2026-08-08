@@ -88,6 +88,7 @@ function createBalancerController (options = {}) {
   let telemetry = null
   let outputReady = false
   const events = []
+  const history = []
 
   function record (timestamp, type, detail, extra = {}) {
     const event = { timestamp, date: localDate(timestamp), type, detail, ...extra }
@@ -229,6 +230,19 @@ function createBalancerController (options = {}) {
       }
     }
     const controllerCommand = { version: timestamp, timestamp, mode: state.mode, ...command }
+    const selected = selectedBattery()
+    history.push({
+      timestamp,
+      selectedCurrent: selected && finite(selected.current) ? selected.current : null,
+      selectedVmax: selected ? selectedVmax(selected) : null,
+      selectedVmin: selected && (selected.effectiveCells || selected.cells) ? Math.min(...(selected.effectiveCells || selected.cells).map(cell => finite(cell.voltage) ? cell.voltage : cell)) : null,
+      globalSpread: finite(globalVmax()) && finite(globalVmin()) ? globalVmax() - globalVmin() : null,
+      selectedSpread: selected && finite(selected.cellSpread) ? selected.cellSpread : null,
+      ccl: ccl(),
+      aggregateCurrentCommand: state.aggregateCurrentCommand,
+      chargeEnabled: command.chargeEnabled === true
+    })
+    if (history.length > 360) history.splice(0, history.length - 360)
     state.lastEvaluationAt = timestamp
     actions.push({ type: 'controller_command', value: controllerCommand })
     actions.push({ type: 'persist', state: { ...state }, config: { ...config } })
@@ -237,7 +251,7 @@ function createBalancerController (options = {}) {
   }
   function status (timestamp, info = freshTelemetry(timestamp), command = null) {
     const selected = selectedBattery(); const spread = selected && finite(selected.cellSpread) ? selected.cellSpread : null
-    return { state: state.state, mode: state.mode, enabled: state.enabled, autoManualMode: state.autoManualMode, selectedAddress: state.selectedAddress, selectedReason: state.selectedReason, cycleCount: state.cycleCount, lastStopReason: state.lastStopReason, fault: state.fault, lockout: state.mode === MODES.ACTIVE && !outputReady ? 'output readback is not verified' : info.lockout, telemetry: telemetry ? { ...telemetry, telemetryAge: info.age, valid: info.valid } : null, socEntryEligible: finite(telemetry && telemetry.soc) && telemetry.soc > config.socEntryThreshold, socContinuationEligible: finite(telemetry && telemetry.soc) && telemetry.soc > config.socExitThreshold, selectedCurrent: selected && selected.current, selectedSpread: spread, balancerLikelyActive: Boolean(selected && finite(selected.current) && selected.current >= config.balancerMinimumCurrent && finite(spread) && spread > config.balancerSpreadThreshold && command && command.chargeEnabled), aggregateCurrentCommand: state.aggregateCurrentCommand, lastCommand: command, config: { ...config }, outputReady, availableEvents: events.slice(-100), lastEvent: state.lastEvent }
+    return { state: state.state, mode: state.mode, enabled: state.enabled, autoManualMode: state.autoManualMode, selectedAddress: state.selectedAddress, selectedReason: state.selectedReason, cycleCount: state.cycleCount, lastStopReason: state.lastStopReason, fault: state.fault, lockout: state.mode === MODES.ACTIVE && !outputReady ? 'output readback is not verified' : info.lockout, telemetry: telemetry ? { ...telemetry, telemetryAge: info.age, valid: info.valid } : null, socEntryEligible: finite(telemetry && telemetry.soc) && telemetry.soc > config.socEntryThreshold, socContinuationEligible: finite(telemetry && telemetry.soc) && telemetry.soc > config.socExitThreshold, selectedCurrent: selected && selected.current, selectedSpread: spread, balancerLikelyActive: Boolean(selected && finite(selected.current) && selected.current >= config.balancerMinimumCurrent && finite(spread) && spread > config.balancerSpreadThreshold && command && command.chargeEnabled), aggregateCurrentCommand: state.aggregateCurrentCommand, lastCommand: command, config: { ...config }, outputReady, history: history.slice(), availableEvents: events.slice(-100), lastEvent: state.lastEvent }
   }
   function handle (message = {}) {
     const timestamp = finite(message.timestamp) ? message.timestamp : now()

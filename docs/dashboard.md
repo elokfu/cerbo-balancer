@@ -44,6 +44,14 @@ above 97% and exits at or below 97%. It controls selected-battery current
 toward 2 A through aggregate DVCC current allowance, without assuming equal
 parallel current sharing.
 
+The controller page includes live selected-current, selected Vmax/Vmin, and
+selected-spread graphs. Its configuration panel exposes SOC gates, spread and
+current targets, voltage ceilings, PI gains, aggregate limit, and recovery
+timeout. Applying values validates them before saving the controller state to
+`cerbo-balancer-state.json` and the active configuration to
+`cerbo-balancer-config.json`; both are restored on Node-RED startup.
+They use append-only JSON snapshots; startup restores the final valid snapshot.
+
 Mode starts at `TEST`. TEST calculates current-control and recovery commands
 but performs no charger or voltage write. ACTIVE remains rejected unless fresh
 complete telemetry, valid configuration, and verified output readback are

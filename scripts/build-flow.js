@@ -10,6 +10,7 @@ const outputPath = path.join(root, 'flow', 'cerbo-balancer-controller.json')
 const controller = fs.readFileSync(path.join(root, 'src', 'controller.js'), 'utf8')
 const maintenanceFormatter = fs.readFileSync(path.join(root, 'src', 'maintenance_formatter.js'), 'utf8')
 const maintenanceView = fs.readFileSync(path.join(root, 'src', 'maintenance_view.html'), 'utf8')
+const controllerDashboard = fs.readFileSync(path.join(root, 'src', 'controller_dashboard.html'), 'utf8')
 const help = fs.readFileSync(path.join(root, 'docs', 'dashboard-help.md'), 'utf8')
 const template = fs.readFileSync(templatePath, 'utf8')
 const flow = JSON.parse(template
@@ -18,6 +19,7 @@ const flow = JSON.parse(template
   .replaceAll('reconstructed_cell_sum', 'reconstructedCellSum')
   .replaceAll('reconstructed_voltage_delta_mv', 'reconstructedVoltageDeltaMv')
   .replaceAll('validation_errors', 'validationErrors')
+  .replace('__CONTROLLER_DASHBOARD__', JSON.stringify(controllerDashboard).slice(1, -1))
   .replace('__DASHBOARD_HELP__', JSON.stringify(help).slice(1, -1)))
 
 const controllerNode = flow.find(node => node.id === 'bal-controller')
@@ -32,6 +34,9 @@ maintenanceFormatterNode.func = maintenanceFormatter
 const maintenanceViewNode = flow.find(node => node.id === 'bal-maintenance')
 if (!maintenanceViewNode) throw new Error('bal-maintenance node is missing from the flow template')
 maintenanceViewNode.format = maintenanceView
+const controllerDashboardNode = flow.find(node => node.id === 'bal-controls')
+if (!controllerDashboardNode) throw new Error('bal-controls node is missing from the flow template')
+controllerDashboardNode.format = controllerDashboard
 
 const rendered = `${JSON.stringify(flow, null, 2)}\n`
 if (process.argv.includes('--check')) {
