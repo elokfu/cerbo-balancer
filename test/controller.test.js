@@ -47,6 +47,10 @@ clock += 2000
 actions = active.handle({ type: 'tick', timestamp: clock })
 assert.equal(command(actions).chargeEnabled, true)
 assert.equal(command(actions).requestedCurrent <= 20, true)
+const commandWithoutNewSample = command(actions).requestedCurrent
+clock += 2000
+actions = active.handle({ type: 'tick', timestamp: clock })
+assert.equal(command(actions).requestedCurrent, commandWithoutNewSample) // PI must not integrate a duplicate RS485 sample
 
 clock += 2000
 actions = active.handle({ type: 'telemetry', timestamp: clock, telemetry: telemetry({ ccl: 0 }) })

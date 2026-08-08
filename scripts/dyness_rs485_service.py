@@ -40,11 +40,15 @@ RECOVERY_DISCOVERY_INTERVAL = 10.0
 MAX_DISCOVERY_MISSES = 10
 SERIAL_RECONNECT_BACKOFF = 2.0
 STATUS44_INTERVAL = 5.0
-# Discovery must never monopolise the serial bus.  One normal probe per poll
-# completes a 2..16 scan in about 30 seconds; recovery uses three probes to
-# retain the required ten-second complete-scan cadence.
-NORMAL_DISCOVERY_PROBES_PER_POLL = 1
-RECOVERY_DISCOVERY_PROBES_PER_POLL = 3
+# CID2 44 is diagnostic-only. Its bounded timeout leaves enough room in the
+# six-second primary telemetry cycle for three battery CID2 42 reads, system
+# limits, and incremental discovery.
+STATUS44_QUERY_TIMEOUT = 0.25
+# Discovery must never monopolise the serial bus. Two normal probes per poll
+# complete a scan within 60 seconds. Recovery checks the full address range in
+# one six-second cycle using the bounded discovery timeout.
+NORMAL_DISCOVERY_PROBES_PER_POLL = 2
+RECOVERY_DISCOVERY_PROBES_PER_POLL = len(EXPECTED_ADDRESSES)
 DISCOVERY_QUERY_TIMEOUT = 0.12
 
 
@@ -484,8 +488,11 @@ class ReadOnlyPoller:
                     errors.append(f"CID2=63: {error}")
             else:
                 errors.append("CID2=63 timeout")
-            status_due = time.monotonic() >= self.next_status_at
             addresses = tuple(self.active_addresses)
+            status_addresses = set(addresses) if (
+                addresses and not self.pending_removal and
+                time.monotonic() >= self.next_status_at
+            ) else set()
             status_errors: list[str] = []
             for address in addresses:
                 frame = self.query(port, address, 0x42)
@@ -496,8 +503,8 @@ class ReadOnlyPoller:
                     battery["systemVoltageDeltaMv"] = ((battery["voltage"] - system_voltage) * 1000
                                                          if system_voltage is not None else None)
                     status44 = self.status44_cache.get(address)
-                    if status_due:
-                        status_frame = self.query(port, address, 0x44)
+                    if address in status_addresses:
+                        status_frame = self.query(port, address, 0x44, STATUS44_QUERY_TIMEOUT)
                         if status_frame:
                             try:
                                 status44 = parse_status_44(status_frame, address).as_dict()
@@ -541,7 +548,7 @@ class ReadOnlyPoller:
                     raw_frames.append({"cid2": "42", "address": address, "frame": frame.decode("ascii")})
                 except (UnicodeDecodeError, ValueError) as error:
                     errors.append(f"CID2=42 address {address:02X}: {error}")
-            if status_due:
+            if status_addresses:
                 self.next_status_at = time.monotonic() + STATUS44_INTERVAL
             # Preserve the expected set used for this active telemetry sample.
             # A completed discovery can add a new battery, which is polled as
@@ -762,7 +769,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", default=DEFAULT_PORT)
     parser.add_argument("--baud", type=int, default=115200)
-    parser.add_argument("--interval", type=float, default=2.0)
+    parser.add_argument("--interval", type=float, default=6.0)
     parser.add_argument("--timeout", type=float, default=0.7)
     parser.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
     parser.add_argument("--once", action="store_true")
@@ -776,6 +783,7 @@ def main() -> int:
     poller = ReadOnlyPoller(args.port, args.baud, args.timeout, store.read_json("cerbo-balancer-rs485-inventory.json"))
     dbus_publisher = DbusPublisher()
     while True:
+        cycle_started = time.monotonic()
         snapshot = poller.poll(store.read_json("cerbo-balancer-command.json"))
         store.write_json("cerbo-balancer-rs485-inventory.json", poller.export_inventory())
         store.append("cerbo-balancer-telemetry.jsonl", snapshot)
@@ -783,7 +791,10 @@ def main() -> int:
         print(json.dumps(snapshot, separators=(",", ":")), flush=True)
         if args.once:
             return 0
-        time.sleep(args.interval)
+        # Keep the requested cadence measured from the start of each poll.
+        # A slow but still bounded read starts the next cycle immediately
+        # rather than adding another full interval of avoidable telemetry age.
+        time.sleep(max(0.0, args.interval - (time.monotonic() - cycle_started)))
 
 
 if __name__ == "__main__":

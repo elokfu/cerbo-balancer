@@ -119,7 +119,7 @@ class DynessServiceTests(unittest.TestCase):
         poller._open_serial = lambda: object()
         poller._owner_conflict = lambda: False
 
-        def query(_port, address, cid2):
+        def query(_port, address, cid2, timeout=None):
             calls.append(cid2)
             return frames[cid2]
 
@@ -164,14 +164,15 @@ class DynessServiceTests(unittest.TestCase):
         poller._owner_conflict = lambda: False
 
         def query(_port, address, cid2, timeout=None):
-            if timeout is not None:
+            if cid2 == 0x42 and timeout is not None:
                 discovery_timeouts.append(timeout)
             if cid2 == 0x42 and address == 3:
                 return response(3, 0x42, pack_info_3)
             return frames[cid2] if address == 2 else None
 
         poller.query = query
-        snapshots = [poller.poll() for _ in range(len(service.EXPECTED_ADDRESSES))]
+        rounds = (len(service.EXPECTED_ADDRESSES) + service.NORMAL_DISCOVERY_PROBES_PER_POLL - 1) // service.NORMAL_DISCOVERY_PROBES_PER_POLL
+        snapshots = [poller.poll() for _ in range(rounds)]
 
         self.assertTrue(all(snapshot["valid"] for snapshot in snapshots), [
             (snapshot["valid"], snapshot["reason"], snapshot.get("expectedAddresses"),

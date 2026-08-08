@@ -2,7 +2,10 @@
 
 The controller page is `/dashboard/balancer`. The maintenance page is
 `/dashboard/balancer-maintenance` and refreshes its telemetry snapshot every
-five seconds while the RS485 poller runs every two seconds.
+five seconds while the RS485 poller runs every six seconds. The controller
+accepts a fresh complete telemetry sample for up to 15 seconds, allowing a
+complete three-battery polling cycle and a bounded delayed retry without a
+false stale-telemetry fault.
 
 The maintenance view exposes CID2 `0x61` system voltage/SOC and validated BMS
 temperature range, CID2 `0x63` limits and permission/state bits, responding addresses, per-battery voltage and signed

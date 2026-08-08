@@ -29,7 +29,10 @@ const DEFAULT_CONFIG = Object.freeze({
   warningCellVoltage: 3.580,
   softwareEmergencyCellVoltage: 3.590,
   dynessMaximumCellVoltage: 3.600,
-  telemetryStaleMs: 5000,
+  // Six-second RS485 cycles need room for three batteries and bounded
+  // diagnostics. This allows a complete cycle plus one delayed retry while
+  // still failing safe on a genuine communication loss.
+  telemetryStaleMs: 15000,
   protectionClearDebounceMs: 5000,
   permissionRestartDebounceMs: 5000,
   currentTargetHoldMs: 10000,
@@ -56,12 +59,16 @@ function emptyState () {
     permissionStartedAt: null, targetHoldStartedAt: null,
     confirmationStartedAt: null, protectionClearStartedAt: null,
     integralTerm: 0, aggregateCurrentCommand: 0, lastEvaluationAt: null,
+    lastControlSampleTimestamp: null,
     lastTransitionAt: null, lastStopReason: null, fault: null, lastEvent: null
   }
 }
 
 function validateConfig (candidate = {}) {
   const config = { ...DEFAULT_CONFIG, ...candidate }
+  // Never let a persisted legacy setting turn normal six-second cycles into
+  // false stale-telemetry faults.
+  config.telemetryStaleMs = Math.max(DEFAULT_CONFIG.telemetryStaleMs, config.telemetryStaleMs)
   const errors = []
   const positive = ['normalPackVoltageMax', 'balancingVoltageCeiling', 'protectionRecoveryVoltage',
     'socEntryThreshold', 'socExitThreshold', 'balancerSpreadThreshold', 'balanceBatteryCurrentTarget',
@@ -101,7 +108,7 @@ function createBalancerController (options = {}) {
     record(timestamp, 'state_transition', `${state.state} -> ${next}: ${reason}`)
     state.state = next; state.lastTransitionAt = timestamp
   }
-  function resetPi () { state.integralTerm = 0; state.aggregateCurrentCommand = config.aggregateCurrentMinimum; state.targetHoldStartedAt = null }
+  function resetPi () { state.integralTerm = 0; state.aggregateCurrentCommand = config.aggregateCurrentMinimum; state.targetHoldStartedAt = null; state.lastControlSampleTimestamp = null }
   function releaseSelection () { state.selectedAddress = null; state.selectedReason = null; state.recoveryStartedAt = null; state.permissionStartedAt = null; state.confirmationStartedAt = null }
   function freshTelemetry (timestamp) {
     const age = telemetry && finite(telemetry.timestamp) ? Math.max(0, timestamp - telemetry.timestamp) : Infinity
@@ -140,8 +147,14 @@ function createBalancerController (options = {}) {
   function safeNormalCommand (reason) { return { requestedVoltage: config.normalPackVoltageMax, requestedCurrent: 100, chargeEnabled: true, reason } }
   function disabledCommand (reason, voltage = config.balancingVoltageCeiling) { return { requestedVoltage: voltage, requestedCurrent: 0, chargeEnabled: false, reason } }
   function activeCurrentCommand (timestamp, battery) {
-    const dt = state.lastEvaluationAt === null ? 0 : Math.max(0, (timestamp - state.lastEvaluationAt) / 1000)
+    const sampleTimestamp = telemetry && finite(telemetry.timestamp) ? telemetry.timestamp : timestamp
     const error = config.balanceBatteryCurrentTarget - (finite(battery.current) ? battery.current : 0)
+    const previousSample = state.lastControlSampleTimestamp
+    if (previousSample === sampleTimestamp) {
+      const effective = Math.min(state.aggregateCurrentCommand, ccl())
+      return { requestedVoltage: config.balancingVoltageCeiling, requestedCurrent: effective, chargeEnabled: true, reason: 'BALANCE_CURRENT_CONTROL', pTerm: config.kp * error, iTerm: state.integralTerm, currentError: error, outputSaturated: effective < state.aggregateCurrentCommand }
+    }
+    const dt = previousSample === null ? 0 : Math.max(0, (sampleTimestamp - previousSample) / 1000)
     const pTerm = config.kp * error
     let iTerm = state.integralTerm
     if (dt > 0) iTerm = Math.max(-config.maxIntegralTerm, Math.min(config.maxIntegralTerm, iTerm + config.ki * error * dt))
@@ -151,7 +164,7 @@ function createBalancerController (options = {}) {
     const effective = Math.min(command, ccl())
     const saturated = effective < command || effective < desired
     if (saturated && error > 0) iTerm = state.integralTerm
-    state.integralTerm = iTerm; state.aggregateCurrentCommand = command
+    state.integralTerm = iTerm; state.aggregateCurrentCommand = command; state.lastControlSampleTimestamp = sampleTimestamp
     return { requestedVoltage: config.balancingVoltageCeiling, requestedCurrent: effective, chargeEnabled: true, reason: 'BALANCE_CURRENT_CONTROL', pTerm, iTerm, currentError: error, outputSaturated: saturated }
   }
   function startRecovery (timestamp, reason) {
