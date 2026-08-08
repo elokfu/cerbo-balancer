@@ -99,6 +99,36 @@ def signed16(value: int) -> int:
     return value - 0x10000 if value & 0x8000 else value
 
 
+STATUS_FLAGS = {
+    0: ("cellUnderVoltageWarning", "cell under-voltage warning"),
+    1: ("cellOverVoltageWarning", "cell over-voltage warning"),
+    2: ("underTemperatureWarning", "under-temperature warning"),
+    3: ("overTemperatureWarning", "over-temperature warning"),
+    4: ("dischargeOverCurrentWarning", "discharge over-current warning"),
+    5: ("chargeOverCurrentWarning", "charge over-current warning"),
+    6: ("cclActive", "CCL active"),
+    7: ("protectionActive", "OVP/protection active"),
+}
+
+
+def decode_status(status: int) -> dict[str, Any]:
+    """Decode the Dyness BMS master status byte without losing the raw value."""
+    flags = {
+        name: bool(status & (1 << bit))
+        for bit, (name, _description) in STATUS_FLAGS.items()
+    }
+    return {
+        **flags,
+        "active": [
+            {"name": name, "description": description, "bit": bit}
+            for bit, (name, description) in STATUS_FLAGS.items()
+            if flags[name]
+        ],
+        "severity": "protection" if flags["protectionActive"]
+        else "warning" if any(flags.values()) else "normal",
+    }
+
+
 @dataclass
 class BatteryTelemetry:
     address: int
@@ -258,6 +288,7 @@ class Limits:
             "dischargeCurrentRaw": self.discharge_current_raw,
             "dischargeCurrentSigned": self.discharge_current_signed,
             "statusRaw": self.status,
+            "statusFlags": decode_status(self.status),
         }
 
 

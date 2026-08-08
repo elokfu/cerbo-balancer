@@ -54,6 +54,7 @@ function normalizeSnapshot (snapshot, now = Date.now(), staleMs = 5000) {
     dcl: finite(limits.dischargeCurrentSigned) ? Math.abs(limits.dischargeCurrentSigned) : null,
     cvl: finite(limits.chargeVoltage) ? limits.chargeVoltage : null,
     bmsStatus: limits.statusRaw ?? null,
+    bmsStatusFlags: limits.statusFlags || {},
     lockout: valid ? null : 'fresh validated RS485 cell telemetry is required'
   }
 }

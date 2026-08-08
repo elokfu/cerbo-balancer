@@ -106,6 +106,43 @@ class DynessServiceTests(unittest.TestCase):
         self.assertEqual(result["effectiveChargeVoltage"], 56.4)
         self.assertEqual(result["effectiveChargeCurrent"], 28.0)
 
+    def test_bms_status_warnings_block_the_affected_direction(self):
+        snapshot = {
+            "valid": True,
+            "batteries": [{"temperatures": [25.0]}],
+            "limits": {
+                "chargeVoltage": 56.5,
+                "chargeCurrent": 56.0,
+                "dischargeCurrentSigned": -198.8,
+                "statusFlags": {
+                    "cellOverVoltageWarning": True,
+                    "dischargeOverCurrentWarning": True,
+                    "severity": "warning",
+                },
+            },
+        }
+        result = effective_control(snapshot, None)
+        self.assertEqual(result["effectiveChargeCurrent"], 0.0)
+        self.assertEqual(result["effectiveDischargeCurrent"], 0.0)
+        self.assertTrue(result["chargeBlockedByStatus"])
+        self.assertTrue(result["dischargeBlockedByStatus"])
+
+    def test_protection_status_clamps_voltage_and_permissions(self):
+        snapshot = {
+            "valid": True,
+            "batteries": [{"temperatures": [25.0]}],
+            "limits": {
+                "chargeVoltage": 56.5,
+                "chargeCurrent": 56.0,
+                "dischargeCurrentSigned": -198.8,
+                "statusFlags": {"protectionActive": True, "severity": "protection"},
+            },
+        }
+        result = effective_control(snapshot, None)
+        self.assertEqual(result["effectiveChargeVoltage"], 53.0)
+        self.assertEqual(result["effectiveChargeCurrent"], 0.0)
+        self.assertEqual(result["effectiveDischargeCurrent"], 0.0)
+
     def test_store_creates_runtime_files_without_credentials(self):
         with tempfile.TemporaryDirectory() as directory:
             store = JsonlStore(directory)

@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from dyness_rs485_protocol import (  # noqa: E402
     checksum,
+    decode_status,
     length_field,
     parse_limits,
     parse_pack_telemetry,
@@ -57,6 +58,19 @@ class DynessProtocolTests(unittest.TestCase):
         self.assertAlmostEqual(parsed.charge_voltage, 56.496)
         self.assertEqual(parsed.charge_current_raw, 56)
         self.assertAlmostEqual(parsed.discharge_current_signed, 20.0)
+
+    def test_status_byte_decodes_all_dyness_master_flags(self):
+        status = decode_status(0xFF)
+        self.assertTrue(status["cellUnderVoltageWarning"])
+        self.assertTrue(status["cellOverVoltageWarning"])
+        self.assertTrue(status["underTemperatureWarning"])
+        self.assertTrue(status["overTemperatureWarning"])
+        self.assertTrue(status["dischargeOverCurrentWarning"])
+        self.assertTrue(status["chargeOverCurrentWarning"])
+        self.assertTrue(status["cclActive"])
+        self.assertTrue(status["protectionActive"])
+        self.assertEqual(status["severity"], "protection")
+        self.assertEqual(len(status["active"]), 8)
 
     def test_non_ascii_frame_is_rejected_before_text_parsing(self):
         valid = response(2, 0x61, "D00000005A").encode("ascii")

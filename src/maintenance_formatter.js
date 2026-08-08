@@ -57,7 +57,12 @@ msg.payload = {
         dischargeVoltage: number(limits.dischargeVoltage),
         ccl: number(limits.chargeCurrent, 1),
         dcl: number(limits.dischargeCurrentSigned, 1),
-        status: limits.statusRaw == null ? '—' : `0x${Number(limits.statusRaw).toString(16).toUpperCase()}`
+        status: limits.statusRaw == null ? '—' : `0x${Number(limits.statusRaw).toString(16).toUpperCase().padStart(2, '0')}`,
+        statusSeverity: limits.statusFlags?.severity || 'unknown',
+        statusActive: Array.isArray(limits.statusFlags?.active)
+            ? limits.statusFlags.active.map((item) => item.description || item.name)
+            : [],
+        statusFlags: limits.statusFlags || {}
     },
     discovery: {
         count: discovery.respondingCount || 0,

@@ -7,6 +7,20 @@ It discovers Dyness/Pylon addresses 2–16 and sends only read requests:
 - CID2 `0x61`: system voltage and SOC cross-check.
 - CID2 `0x63`: charge/discharge voltage, CCL, DCL, and status.
 
+The CID2 `0x63` status byte is decoded and retained as `limits.statusFlags`.
+Bits are mapped as follows: bit 0 cell under-voltage, bit 1 cell
+over-voltage, bit 2 under-temperature, bit 3 over-temperature, bit 4
+discharge over-current, bit 5 charge over-current, bit 6 CCL active, and bit 7
+OVP/protection active. The raw byte remains in `statusRaw`; active flags include
+their bit number and description.
+
+Safety handling is conservative: cell over-voltage, cold/hot warnings, charge
+over-current, and protection block charging; cell under-voltage and discharge
+over-current block discharge; temperature warnings also force the thermal
+factor to zero; protection clamps the charge-voltage ceiling to 53.0 V. The
+advertised CCL/DCL values remain visible for diagnostics, while effective
+limits and Victron BMS permissions reflect these status overrides.
+
 The adapter is optional during development. A root-supervised runit wrapper
 owns `ttyUSB0`, invokes Venus' official `stop-tty.sh ttyUSB0` handoff, and
 starts the Python poller as `nodered`. Node-RED only reads the latest telemetry
