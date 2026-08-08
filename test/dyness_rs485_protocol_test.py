@@ -58,6 +58,12 @@ class DynessProtocolTests(unittest.TestCase):
         self.assertEqual(parsed.charge_current_raw, 56)
         self.assertAlmostEqual(parsed.discharge_current_signed, 20.0)
 
+    def test_non_ascii_frame_is_rejected_before_text_parsing(self):
+        valid = response(2, 0x61, "D00000005A").encode("ascii")
+        corrupted = valid[:10] + b"\xff" + valid[11:]
+        with self.assertRaisesRegex(ValueError, "non-ASCII"):
+            parse_system_voltage(corrupted)
+
 
 if __name__ == "__main__":
     unittest.main()

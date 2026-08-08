@@ -1,0 +1,41 @@
+#!/bin/sh
+set -eu
+
+PORT=/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A602K5MM-if00-port0
+STOP_HOOK=/opt/victronenergy/serial-starter/stop-tty.sh
+SERVICE=/data/home/nodered/cerbo-balancer/dyness_rs485_service.py
+STATE_DIR=/data/home/nodered
+
+take_ownership() {
+    if [ -x "$STOP_HOOK" ] && [ -e "$PORT" ]; then
+        "$STOP_HOOK" ttyUSB0
+    fi
+}
+
+take_ownership
+setpriv --init-groups --reuid nodered --regid nodered \
+    python3 "$SERVICE" --port "$PORT" --baud 115200 --state-dir "$STATE_DIR" &
+poller_pid=$!
+
+cleanup() {
+    kill "$poller_pid" 2>/dev/null || true
+    wait "$poller_pid" 2>/dev/null || true
+}
+trap cleanup INT TERM EXIT
+
+while kill -0 "$poller_pid" 2>/dev/null; do
+    if [ -e "$PORT" ]; then
+        foreign_owner=0
+        for owner in $(fuser "$PORT" 2>/dev/null || true); do
+            if [ "$owner" != "$poller_pid" ]; then
+                foreign_owner=1
+            fi
+        done
+        if [ -e /dev/serial-starter/ttyUSB0 ] || [ "$foreign_owner" -eq 1 ]; then
+            take_ownership
+        fi
+    fi
+    sleep 2
+done
+
+wait "$poller_pid"

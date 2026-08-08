@@ -1,12 +1,18 @@
-const snapshot = flow.get('balancerRs485Snapshot') || {}
+const current = flow.get('balancerRs485Snapshot') || {}
+const lastValid = flow.get('balancerRs485LastValidSnapshot') || null
 const number = (value, digits = 3) => typeof value === 'number' && Number.isFinite(value) ? value.toFixed(digits) : '—'
-const aggregate = snapshot.aggregate || {}
-const system = snapshot.system || {}
-const limits = snapshot.limits || {}
-const discovery = snapshot.discovery || {}
-const inventory = snapshot.inventory || {}
+const now = Date.now()
+const lastValidAgeMs = lastValid && typeof lastValid.timestamp === 'number' ? Math.max(0, now - lastValid.timestamp) : null
+const displaySnapshot = current.valid === true ? current : lastValidAgeMs != null && lastValidAgeMs <= 10000 ? lastValid : {}
+const displayState = current.valid === true ? 'LIVE' : displaySnapshot.timestamp ? 'STALE' : 'INVALID'
+const aggregate = displaySnapshot.aggregate || {}
+const system = displaySnapshot.system || {}
+const limits = displaySnapshot.limits || {}
+const discovery = current.discovery || displaySnapshot.discovery || {}
+const inventory = current.inventory || displaySnapshot.inventory || {}
+const health = current.serialHealth || displaySnapshot.serialHealth || {}
 
-const batteries = (snapshot.batteries || []).map((battery) => {
+const batteries = (displaySnapshot.batteries || []).map((battery) => {
     const cells = battery.effectiveCells || battery.effective_cells || []
     const cellValues = cells.map((cell) => cell.voltage).filter((value) => typeof value === 'number' && Number.isFinite(value))
     return {
@@ -29,11 +35,22 @@ const batteries = (snapshot.batteries || []).map((battery) => {
 })
 
 msg.payload = {
-    decoder: snapshot.decoderHealth || 'unknown',
-    valid: snapshot.valid === true,
-    port: snapshot.serialPort || '—',
-    baud: snapshot.baud || '—',
-    age: snapshot.telemetryAge == null ? '—' : `${snapshot.telemetryAge} ms`,
+    decoder: current.decoderHealth || 'unknown',
+    valid: current.valid === true,
+    displayState,
+    displayAgeMs: lastValidAgeMs,
+    age: displaySnapshot.timestamp == null ? '—' : `${Math.max(0, now - displaySnapshot.timestamp)} ms`,
+    reason: current.reason || null,
+    port: current.serialPort || displaySnapshot.serialPort || '—',
+    baud: current.baud || displaySnapshot.baud || '—',
+    serialHealth: {
+        state: health.state || 'unknown',
+        ownerConflict: health.ownerConflict === true,
+        reconnectCount: health.reconnectCount || 0,
+        lastPollDurationMs: health.lastPollDurationMs == null ? '—' : number(health.lastPollDurationMs, 1),
+        lastError: health.lastError || current.reason || 'none',
+        lastErrorType: health.lastErrorType || 'none'
+    },
     system: { voltage: number(system.voltage61), soc: number(system.soc61, 1) },
     limits: {
         chargeVoltage: number(limits.chargeVoltage),

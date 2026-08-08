@@ -1,14 +1,42 @@
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+import dyness_rs485_service as service  # noqa: E402
 from dyness_rs485_service import JsonlStore, ReadOnlyPoller, effective_control  # noqa: E402
 
 
 class DynessServiceTests(unittest.TestCase):
+    def test_serial_session_is_reused_until_disconnect(self):
+        class FakeSerialPort:
+            is_open = True
+
+            def __init__(self, *args, **kwargs):
+                self.closed = False
+
+            def reset_input_buffer(self):
+                return None
+
+            def close(self):
+                self.closed = True
+                self.is_open = False
+
+        class FakeSerialModule:
+            PARITY_NONE = "N"
+            Serial = FakeSerialPort
+
+        poller = ReadOnlyPoller("C:\\fake-dyness-rs485", 115200, 0.01)
+        with patch.object(service, "serial", FakeSerialModule), patch.object(service.os.path, "exists", return_value=True):
+            first = poller._open_serial()
+            second = poller._open_serial()
+            self.assertIs(first, second)
+            poller._close_serial()
+            self.assertIsNone(poller.serial_port)
+
     def test_missing_known_battery_is_pending_before_removal(self):
         poller = ReadOnlyPoller("C:\\missing-dyness-rs485", 115200, 0.01)
         poller.apply_discovery([2, 3], 1000)
@@ -51,11 +79,15 @@ class DynessServiceTests(unittest.TestCase):
         self.assertEqual(poller.inventory_snapshot()["discoveryMode"], "recovery")
 
     def test_disconnected_adapter_is_explicitly_safe(self):
-        snapshot = ReadOnlyPoller("C:\\missing-dyness-rs485", 115200, 0.01).poll()
+        poller = ReadOnlyPoller("C:\\missing-dyness-rs485", 115200, 0.01)
+        poller.apply_discovery([2], 1000)
+        snapshot = poller.poll()
         self.assertFalse(snapshot["valid"])
         self.assertFalse(snapshot["cellTelemetryValid"])
         self.assertEqual(snapshot["effectiveControl"]["effectiveChargeCurrent"], 0.0)
         self.assertEqual(snapshot["effectiveControl"]["effectiveChargeVoltage"], 53.0)
+        self.assertEqual(poller.active_addresses, [2])
+        self.assertEqual(snapshot["serialHealth"]["state"], "disconnected")
 
     def test_active_command_is_arbitrated_by_bms_limits_and_temperature(self):
         snapshot = {

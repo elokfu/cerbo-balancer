@@ -27,8 +27,6 @@ controllerNode.func = controllerNode.func.replace(
   'const source = "__CONTROLLER_SOURCE__";',
   `const source = Buffer.from(${JSON.stringify(Buffer.from(controller, 'utf8').toString('base64'))}, 'base64').toString('utf8');`
 )
-const rs485ServiceNode = flow.find(node => node.id === 'bal-rs485-service')
-if (!rs485ServiceNode) throw new Error('bal-rs485-service node is missing from the flow template')
 const maintenanceFormatterNode = flow.find(node => node.id === 'bal-maint-format')
 if (!maintenanceFormatterNode) throw new Error('bal-maint-format node is missing from the flow template')
 maintenanceFormatterNode.func = maintenanceFormatter

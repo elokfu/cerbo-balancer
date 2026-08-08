@@ -254,16 +254,16 @@
     "wires": []
   },
   {
-    "id": "bal-rs485-service",
+    "id": "bal-rs485-read",
     "type": "exec",
     "z": "bal-tab",
-    "command": "python3 /data/home/nodered/cerbo-balancer/dyness_rs485_service.py --port /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A602K5MM-if00-port0 --baud 115200 --state-dir /data/home/nodered",
+    "command": "tail -n 1 /data/home/nodered/cerbo-balancer-telemetry.jsonl",
     "addpay": false,
     "append": "",
     "useSpawn": "true",
     "timer": "",
     "winHide": false,
-    "name": "Dyness RS485 read-only service",
+    "name": "Read latest Dyness RS485 snapshot",
     "x": 180,
     "y": 520,
     "wires": [["bal-rs485-line"], [], ["bal-reader-error"]]
@@ -273,7 +273,7 @@
     "type": "function",
     "z": "bal-tab",
     "name": "Validate RS485 snapshot",
-    "func": "const line = String(msg.payload || '').trim();\nif (!line.startsWith('{')) return null;\ntry {\n  const snapshot = JSON.parse(line);\n  if (!snapshot || snapshot.source !== 'rs485-dyness') return null;\n  flow.set('balancerRs485Snapshot', snapshot);\n  msg.topic = 'rs485';\n  msg.payload = snapshot;\n  return msg;\n} catch (error) { node.warn(`invalid RS485 JSON: ${error.message}`); return null; }",
+    "func": "const line = String(msg.payload || '').trim();\nif (!line.startsWith('{')) return null;\ntry {\n  const snapshot = JSON.parse(line);\n  if (!snapshot || snapshot.source !== 'rs485-dyness') return null;\n  flow.set('balancerRs485Snapshot', snapshot);\n  if (snapshot.valid === true) flow.set('balancerRs485LastValidSnapshot', snapshot);\n  msg.topic = 'rs485';\n  msg.payload = snapshot;\n  return msg;\n} catch (error) { node.warn(`invalid RS485 JSON: ${error.message}`); return null; }",
     "outputs": 1,
     "timeout": 0,
     "noerr": 0,
@@ -447,20 +447,20 @@
     "wires": []
   },
   {
-    "id": "bal-rs485-start",
+    "id": "bal-rs485-refresh",
     "type": "inject",
     "z": "bal-tab",
-    "name": "Start RS485 service",
+    "name": "Refresh latest RS485 snapshot",
     "props": [{ "p": "payload" }],
-    "repeat": "",
+    "repeat": "2",
     "crontab": "",
     "once": true,
     "onceDelay": "1",
     "topic": "",
-    "payload": "start",
+    "payload": "refresh",
     "payloadType": "str",
     "x": 180,
     "y": 480,
-    "wires": [["bal-rs485-service"]]
+    "wires": [["bal-rs485-read"]]
   }
 ]

@@ -39,13 +39,34 @@ EXPECTED_ADDRESSES = tuple(range(2, 17))
 NORMAL_DISCOVERY_INTERVAL = 60.0
 RECOVERY_DISCOVERY_INTERVAL = 10.0
 MAX_DISCOVERY_MISSES = 10
+SERIAL_RECONNECT_BACKOFF = 2.0
 
 
 def now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def unavailable_snapshot(reason: str, port: str, baud: int) -> dict[str, Any]:
+def default_serial_health() -> dict[str, Any]:
+    return {
+        "state": "disconnected",
+        "connected": False,
+        "ownerConflict": False,
+        "reconnectCount": 0,
+        "lastConnectedAt": None,
+        "lastPollAt": None,
+        "lastValidAt": None,
+        "lastError": None,
+        "lastErrorType": None,
+        "lastPollDurationMs": None,
+    }
+
+
+def unavailable_snapshot(
+    reason: str,
+    port: str,
+    baud: int,
+    serial_health: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "timestamp": now_ms(), "telemetryAge": None, "valid": False,
         "source": "rs485-dyness", "serialPort": port, "baud": baud,
@@ -57,6 +78,7 @@ def unavailable_snapshot(reason: str, port: str, baud: int) -> dict[str, Any]:
         "maxCellAddress": None, "maxCellIndex": None, "minimumTemperature": None,
         "maximumTemperature": None, "averageTemperature": None},
         "cellTelemetryValid": False, "decoderHealth": "unavailable",
+        "serialHealth": serial_health or default_serial_health(),
     }
 
 
@@ -125,6 +147,9 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
 class ReadOnlyPoller:
     def __init__(self, port: str, baud: int, timeout: float, inventory: dict[str, Any] | None = None):
         self.port_name, self.baud, self.timeout = port, baud, timeout
+        self.serial_port: Any | None = None
+        self.serial_retry_at = 0.0
+        self.serial_health = default_serial_health()
         self.active_addresses: list[int] = []
         self.pending_removal: dict[int, dict[str, Any]] = {}
         self.last_seen_at: dict[int, int] = {}
@@ -132,6 +157,96 @@ class ReadOnlyPoller:
         self.last_discovery_at: int | None = None
         if inventory:
             self.load_inventory(inventory)
+
+    def _owner_conflict(self) -> bool:
+        if not os.path.exists(self.port_name):
+            return False
+        try:
+            result = subprocess.run(
+                ["fuser", self.port_name],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=0.3,
+            )
+        except (FileNotFoundError, OSError, subprocess.SubprocessError):
+            return False
+        owners: set[int] = set()
+        for token in f"{result.stdout} {result.stderr}".split():
+            try:
+                owners.add(int(token))
+            except ValueError:
+                continue
+        return any(owner != os.getpid() for owner in owners)
+
+    def _set_serial_error(self, error: Exception, error_type: str) -> None:
+        self.serial_health.update({
+            "state": "error",
+            "connected": False,
+            "lastError": str(error),
+            "lastErrorType": error_type,
+        })
+
+    def _close_serial(self, reason: str | None = None) -> None:
+        if self.serial_port is not None:
+            try:
+                self.serial_port.close()
+            except (OSError, AttributeError):
+                pass
+        self.serial_port = None
+        self.serial_health["connected"] = False
+        self.serial_health["state"] = "disconnected"
+        if reason:
+            self.serial_health["lastError"] = reason
+        self.serial_retry_at = time.monotonic() + SERIAL_RECONNECT_BACKOFF
+
+    def _open_serial(self) -> Any | None:
+        if self.serial_port is not None and getattr(self.serial_port, "is_open", True):
+            return self.serial_port
+        if time.monotonic() < self.serial_retry_at:
+            return None
+        if not os.path.exists(self.port_name):
+            self.serial_health.update({
+                "state": "disconnected",
+                "connected": False,
+                "ownerConflict": False,
+                "lastError": "RS485 adapter is disconnected",
+                "lastErrorType": "usb_disconnect",
+            })
+            return None
+        try:
+            options = {
+                "baudrate": self.baud,
+                "bytesize": 8,
+                "parity": serial.PARITY_NONE,
+                "stopbits": 1,
+                "timeout": 0.05,
+                "write_timeout": self.timeout,
+                "exclusive": True,
+            }
+            try:
+                self.serial_port = serial.Serial(self.port_name, **options)
+            except TypeError:
+                options.pop("exclusive")
+                self.serial_port = serial.Serial(self.port_name, **options)
+            self.serial_port.reset_input_buffer()
+            connected_at = now_ms()
+            self.serial_health.update({
+                "state": "connected",
+                "connected": True,
+                "ownerConflict": self._owner_conflict(),
+                "reconnectCount": self.serial_health["reconnectCount"] + 1,
+                "lastConnectedAt": connected_at,
+                "lastError": None,
+                "lastErrorType": None,
+            })
+            return self.serial_port
+        except Exception as error:
+            self.serial_port = None
+            self.serial_health["ownerConflict"] = self._owner_conflict()
+            self._set_serial_error(error, "open")
+            self.serial_retry_at = time.monotonic() + SERIAL_RECONNECT_BACKOFF
+            return None
 
     def load_inventory(self, inventory: dict[str, Any]) -> None:
         active = inventory.get("activeAddresses", [])
@@ -234,7 +349,7 @@ class ReadOnlyPoller:
         interval = RECOVERY_DISCOVERY_INTERVAL if self.pending_removal else NORMAL_DISCOVERY_INTERVAL
         self.next_discovery_at = time.monotonic() + interval
 
-    def query(self, port: Any, address: int, cid2: int) -> str | None:
+    def query(self, port: Any, address: int, cid2: int) -> bytes | None:
         port.reset_input_buffer()
         port.write(request(address, cid2))
         port.flush()
@@ -252,106 +367,112 @@ class ReadOnlyPoller:
             if started:
                 frame.extend(byte)
                 if byte == b"\r":
-                    return frame.decode("ascii", errors="replace")
+                    return bytes(frame)
         return None
 
     def poll(self, command: dict[str, Any] | None = None) -> dict[str, Any]:
+        started = time.monotonic()
+        self.serial_health["ownerConflict"] = self._owner_conflict()
         if serial is None:
-            snapshot = unavailable_snapshot("pyserial is unavailable", self.port_name, self.baud)
+            snapshot = unavailable_snapshot("pyserial is unavailable", self.port_name, self.baud, self.serial_health.copy())
             snapshot["effectiveControl"] = effective_control(snapshot, command)
             return self.decorate_snapshot(snapshot)
-        if not os.path.exists(self.port_name):
-            snapshot = unavailable_snapshot("RS485 adapter is disconnected", self.port_name, self.baud)
+        port = self._open_serial()
+        if port is None:
+            reason = self.serial_health.get("lastError") or "RS485 adapter is disconnected"
+            snapshot = unavailable_snapshot(reason, self.port_name, self.baud, self.serial_health.copy())
             snapshot["effectiveControl"] = effective_control(snapshot, command)
             return self.decorate_snapshot(snapshot)
         try:
-            with serial.Serial(self.port_name, baudrate=self.baud, bytesize=8,
-                               parity=serial.PARITY_NONE, stopbits=1, timeout=0.05) as port:
-                system = self.query(port, 2, 0x61)
-                limits_frame = self.query(port, 2, 0x63)
-                batteries = []
-                raw_frames = []
-                system_voltage = system_soc = None
-                errors = []
-                if system:
-                    try:
-                        parse_response(system, 2, 0x61)
-                        system_voltage, system_soc = parse_system_voltage(system), parse_system_soc(system)
-                        raw_frames.append({"cid2": "61", "address": 2, "frame": system})
-                    except ValueError as error:
-                        errors.append(f"CID2=61: {error}")
-                else:
-                    errors.append("CID2=61 timeout")
-                limits = None
-                if limits_frame:
-                    try:
-                        limits = parse_limits(limits_frame).as_dict()
-                        raw_frames.append({"cid2": "63", "address": 2, "frame": limits_frame})
-                    except ValueError as error:
-                        errors.append(f"CID2=63: {error}")
-                else:
-                    errors.append("CID2=63 timeout")
-                discovery_due = time.monotonic() >= self.next_discovery_at
-                addresses = EXPECTED_ADDRESSES if discovery_due else tuple(self.active_addresses)
-                for address in addresses:
-                    frame = self.query(port, address, 0x42)
-                    if not frame:
-                        continue
-                    try:
-                        battery = parse_pack_telemetry(frame, address).as_dict()
-                        battery["systemVoltageDeltaMv"] = ((battery["voltage"] - system_voltage) * 1000
-                                                             if system_voltage is not None else None)
-                        batteries.append(battery)
-                        raw_frames.append({"cid2": "42", "address": address, "frame": frame})
-                    except ValueError as error:
-                        errors.append(f"CID2=42 address {address:02X}: {error}")
-                if discovery_due:
-                    self.apply_discovery([item["address"] for item in batteries], now_ms())
-                valid_batteries = [item for item in batteries if item["valid"]]
-                expected_addresses = set(self.active_addresses)
-                responding_addresses = {item["address"] for item in batteries}
-                complete_battery_set = bool(expected_addresses) and not self.pending_removal and responding_addresses == expected_addresses
-                cells = [(item["address"], cell) for item in valid_batteries for cell in item["effectiveCells"]]
-                vmax_entry = max(cells, key=lambda entry: entry[1]["voltage"], default=(None, {"index": None, "voltage": None}))
-                vmin_entry = min(cells, key=lambda entry: entry[1]["voltage"], default=(None, {"index": None, "voltage": None}))
-                currents = [item["current"] for item in valid_batteries]
-                temps = [temperature for item in valid_batteries for temperature in item["temperatures"]]
-                all_expected_valid = complete_battery_set and len(valid_batteries) == len(batteries)
-                snapshot = {
-                    "timestamp": now_ms(), "telemetryAge": 0, "valid": bool(system_voltage is not None and limits and all_expected_valid),
-                    "source": "rs485-dyness", "serialPort": self.port_name, "baud": self.baud,
-                    "reason": "; ".join(errors) if errors else None,
-                    "system": {"voltage61": system_voltage, "soc61": system_soc}, "limits": limits,
-                    "discovery": {"scannedAddresses": list(addresses),
-                    "respondingAddresses": [item["address"] for item in batteries], "respondingCount": len(batteries),
-                    "scanType": "full" if discovery_due else "active"},
-                    "batteries": batteries,
-                    "aggregate": {"summedBatteryCurrent": sum(currents) if all_expected_valid else None,
-                    "vmin": vmin_entry[1]["voltage"], "vmax": vmax_entry[1]["voltage"],
-                    "spread": (vmax_entry[1]["voltage"] - vmin_entry[1]["voltage"] if cells else None),
-                    "minCellAddress": vmin_entry[0], "minCellIndex": vmin_entry[1]["index"],
-                    "maxCellAddress": vmax_entry[0], "maxCellIndex": vmax_entry[1]["index"],
-                    "minimumTemperature": min(temps) if temps else None, "maximumTemperature": max(temps) if temps else None,
-                    "averageTemperature": sum(temps) / len(temps) if temps else None},
-                    "cellTelemetryValid": bool(all_expected_valid and cells),
-                    "decoderHealth": "healthy" if not errors else "degraded", "rawFrames": raw_frames,
-                }
-                snapshot["effectiveControl"] = effective_control(snapshot, command)
-                return self.decorate_snapshot(snapshot)
-        except Exception as error:  # serial errors must fail safe and be observable
-            snapshot = unavailable_snapshot(f"serial poll failed: {error}", self.port_name, self.baud)
+            system = self.query(port, 2, 0x61)
+            limits_frame = self.query(port, 2, 0x63)
+            batteries = []
+            raw_frames = []
+            system_voltage = system_soc = None
+            errors = []
+            if system:
+                try:
+                    parse_response(system, 2, 0x61)
+                    system_voltage, system_soc = parse_system_voltage(system), parse_system_soc(system)
+                    raw_frames.append({"cid2": "61", "address": 2, "frame": system.decode("ascii")})
+                except ValueError as error:
+                    errors.append(f"CID2=61: {error}")
+            else:
+                errors.append("CID2=61 timeout")
+            limits = None
+            if limits_frame:
+                try:
+                    limits = parse_limits(limits_frame).as_dict()
+                    raw_frames.append({"cid2": "63", "address": 2, "frame": limits_frame.decode("ascii")})
+                except ValueError as error:
+                    errors.append(f"CID2=63: {error}")
+            else:
+                errors.append("CID2=63 timeout")
+            discovery_due = time.monotonic() >= self.next_discovery_at
+            addresses = EXPECTED_ADDRESSES if discovery_due else tuple(self.active_addresses)
+            for address in addresses:
+                frame = self.query(port, address, 0x42)
+                if not frame:
+                    continue
+                try:
+                    battery = parse_pack_telemetry(frame, address).as_dict()
+                    battery["systemVoltageDeltaMv"] = ((battery["voltage"] - system_voltage) * 1000
+                                                         if system_voltage is not None else None)
+                    batteries.append(battery)
+                    raw_frames.append({"cid2": "42", "address": address, "frame": frame.decode("ascii")})
+                except (UnicodeDecodeError, ValueError) as error:
+                    errors.append(f"CID2=42 address {address:02X}: {error}")
+            if discovery_due:
+                self.apply_discovery([item["address"] for item in batteries], now_ms())
+            valid_batteries = [item for item in batteries if item["valid"]]
+            expected_addresses = set(self.active_addresses)
+            responding_addresses = {item["address"] for item in batteries}
+            complete_battery_set = bool(expected_addresses) and not self.pending_removal and responding_addresses == expected_addresses
+            cells = [(item["address"], cell) for item in valid_batteries for cell in item["effectiveCells"]]
+            vmax_entry = max(cells, key=lambda entry: entry[1]["voltage"], default=(None, {"index": None, "voltage": None}))
+            vmin_entry = min(cells, key=lambda entry: entry[1]["voltage"], default=(None, {"index": None, "voltage": None}))
+            currents = [item["current"] for item in valid_batteries]
+            temps = [temperature for item in valid_batteries for temperature in item["temperatures"]]
+            all_expected_valid = complete_battery_set and len(valid_batteries) == len(batteries)
+            snapshot = {
+                "timestamp": now_ms(), "telemetryAge": 0, "valid": bool(system_voltage is not None and limits and all_expected_valid),
+                "source": "rs485-dyness", "serialPort": self.port_name, "baud": self.baud,
+                "reason": "; ".join(errors) if errors else None,
+                "system": {"voltage61": system_voltage, "soc61": system_soc}, "limits": limits,
+                "discovery": {"scannedAddresses": list(addresses),
+                "respondingAddresses": [item["address"] for item in batteries], "respondingCount": len(batteries),
+                "scanType": "full" if discovery_due else "active"},
+                "batteries": batteries,
+                "aggregate": {"summedBatteryCurrent": sum(currents) if all_expected_valid else None,
+                "vmin": vmin_entry[1]["voltage"], "vmax": vmax_entry[1]["voltage"],
+                "spread": (vmax_entry[1]["voltage"] - vmin_entry[1]["voltage"] if cells else None),
+                "minCellAddress": vmin_entry[0], "minCellIndex": vmin_entry[1]["index"],
+                "maxCellAddress": vmax_entry[0], "maxCellIndex": vmax_entry[1]["index"],
+                "minimumTemperature": min(temps) if temps else None, "maximumTemperature": max(temps) if temps else None,
+                "averageTemperature": sum(temps) / len(temps) if temps else None},
+                "cellTelemetryValid": bool(all_expected_valid and cells),
+                "decoderHealth": "healthy" if not errors else "degraded", "rawFrames": raw_frames,
+            }
+            self.serial_health.update({
+                "state": "connected" if not errors else "degraded",
+                "connected": True,
+                "ownerConflict": self._owner_conflict(),
+                "lastPollAt": snapshot["timestamp"],
+                "lastPollDurationMs": round((time.monotonic() - started) * 1000, 1),
+            })
+            if snapshot["valid"]:
+                self.serial_health["lastValidAt"] = snapshot["timestamp"]
+            snapshot["serialHealth"] = self.serial_health.copy()
             snapshot["effectiveControl"] = effective_control(snapshot, command)
             return self.decorate_snapshot(snapshot)
-
-
-def stop_serial_starter(port: str) -> None:
-    if os.path.exists(port):
-        candidate = "/opt/victronenergy/serial-starter/stop-tty.sh"
-        if os.path.exists(candidate):
-            try:
-                subprocess.run([candidate, "ttyUSB0"], check=False, capture_output=True, timeout=2.0)
-            except subprocess.TimeoutExpired:
-                pass
+        except Exception as error:  # serial errors must fail safe and be observable
+            error_type = "usb_disconnect" if isinstance(error, OSError) else "serial"
+            self._set_serial_error(error, error_type)
+            self._close_serial()
+            snapshot = unavailable_snapshot(f"serial poll failed: {error}", self.port_name, self.baud, self.serial_health.copy())
+            snapshot["serialHealth"]["lastPollDurationMs"] = round((time.monotonic() - started) * 1000, 1)
+            snapshot["effectiveControl"] = effective_control(snapshot, command)
+            return self.decorate_snapshot(snapshot)
 
 
 class DbusPublisher:
@@ -492,7 +613,6 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=0.7)
     parser.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
     parser.add_argument("--once", action="store_true")
-    parser.add_argument("--no-serial-starter-stop", action="store_true")
     args = parser.parse_args()
     store = JsonlStore(args.state_dir)
     store.ensure_json("cerbo-balancer-config.json", {"mode": "TEST", "enabled": False})
@@ -502,13 +622,7 @@ def main() -> int:
     store.ensure_json("cerbo-balancer-sessions.jsonl", {})
     poller = ReadOnlyPoller(args.port, args.baud, args.timeout, store.read_json("cerbo-balancer-rs485-inventory.json"))
     dbus_publisher = DbusPublisher()
-    serial_starter_stopped = False
     while True:
-        if not args.no_serial_starter_stop and not serial_starter_stopped and os.path.exists(args.port):
-            stop_serial_starter(args.port)
-            serial_starter_stopped = True
-        if not os.path.exists(args.port):
-            serial_starter_stopped = False
         snapshot = poller.poll(store.read_json("cerbo-balancer-command.json"))
         store.write_json("cerbo-balancer-rs485-inventory.json", poller.export_inventory())
         store.append("cerbo-balancer-telemetry.jsonl", snapshot)

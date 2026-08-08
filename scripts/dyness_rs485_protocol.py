@@ -26,9 +26,21 @@ def request(address: int, cid2: int) -> bytes:
     return f"~{body}{checksum(body)}\r".encode("ascii")
 
 
-def response_info(frame: str) -> str:
+def _clean_frame(frame: str | bytes) -> str:
+    if isinstance(frame, bytes):
+        if any(value > 0x7F for value in frame):
+            raise ValueError("non-ASCII byte in response frame")
+        try:
+            frame = frame.decode("ascii")
+        except UnicodeDecodeError as error:
+            raise ValueError("non-ASCII response frame") from error
     if frame.endswith("\r"):
         frame = frame[:-1]
+    return frame
+
+
+def response_info(frame: str | bytes) -> str:
+    frame = _clean_frame(frame)
     if not frame.startswith("~") or len(frame) < 18:
         raise ValueError(f"invalid response frame: {frame!r}")
     return frame[13:-4]
@@ -41,9 +53,9 @@ def length_field(length: int) -> str:
     return f"{check:X}{length:03X}"
 
 
-def parse_response(frame: str, address: int, cid2: int) -> dict[str, Any]:
+def parse_response(frame: str | bytes, address: int, cid2: int) -> dict[str, Any]:
     """Validate a response and return raw INFO for the CID-specific parser."""
-    clean = frame[:-1] if frame.endswith("\r") else frame
+    clean = _clean_frame(frame)
     if not clean.startswith("~") or len(clean) < 18:
         raise ValueError("invalid response framing")
     body = clean[1:-4]

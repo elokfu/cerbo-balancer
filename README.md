@@ -26,15 +26,18 @@ npm run build-flow
 npm run check
 ```
 
-The generated flow is `flow/cerbo-balancer-controller.json`. Import it by
-merging it with the existing Node-RED flow, retaining the existing
-`victron-client` configuration node. Dashboards are available at
-`/dashboard/balancer` and `/dashboard/balancer-maintenance`. The maintenance
-page refreshes every five seconds and shows system SOC/voltage, limits,
-per-battery voltage/current, cell voltages, per-battery and all-pack spread,
-temperatures, and inventory recovery status. Normal discovery runs every 60
-seconds. When a known battery is missing, recovery scans run every 10 seconds
-and the battery is removed only after 10 failed scans.
+The root-supervised RS485 service owns the optional FTDI adapter and starts the
+read-only Python poller as `nodered`. Node-RED reads the latest JSONL snapshot;
+it does not launch a second serial client. The generated flow is
+`flow/cerbo-balancer-controller.json`. Import it by merging it with the
+existing Node-RED flow, retaining the existing `victron-client` configuration
+node. Dashboards are available at `/dashboard/balancer` and
+`/dashboard/balancer-maintenance`. The maintenance page refreshes every five
+seconds and shows system SOC/voltage, limits, per-battery voltage/current,
+cell voltages, per-battery and all-pack spread, temperatures, inventory
+recovery status, serial ownership, reconnect count, and USB/serial errors.
+Short interruptions show the last valid measurements as `STALE` for up to ten
+seconds; controller safety remains invalid during that period.
 
 Persistent runtime files are stored on Cerbo under `/data/home/nodered/`:
 
@@ -46,6 +49,11 @@ Persistent runtime files are stored on Cerbo under `/data/home/nodered/`:
 /data/home/nodered/cerbo-balancer-telemetry.jsonl
 /data/home/nodered/cerbo-balancer-sessions.jsonl
 ```
+
+Install `deploy/cerbo-balancer-rs485-run` as a root-supervised runit service.
+It exclusively claims `ttyUSB0`, stops Venus generic serial services assigned
+to that port, and repeats the handoff after a USB reconnect. CAN, DVCC, and
+unrelated serial ports are not changed.
 
 No credentials are stored in this repository.
 

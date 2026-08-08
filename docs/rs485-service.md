@@ -7,9 +7,19 @@ It discovers Dyness/Pylon addresses 2–16 and sends only read requests:
 - CID2 `0x61`: system voltage and SOC cross-check.
 - CID2 `0x63`: charge/discharge voltage, CCL, DCL, and status.
 
-The adapter is optional during development. If it is disconnected, the service
-emits a timestamped invalid snapshot, keeps CCL/DCL at zero, and does not
-allow ACTIVE controller operation.
+The adapter is optional during development. A root-supervised runit wrapper
+owns `ttyUSB0`, invokes Venus' official `stop-tty.sh ttyUSB0` handoff, and
+starts the Python poller as `nodered`. Node-RED only reads the latest telemetry
+JSONL line; it does not launch another serial client. If the adapter is
+disconnected, the service emits a timestamped invalid snapshot, keeps CCL/DCL
+at zero, and does not allow ACTIVE controller operation.
+
+The Python poller keeps one serial session open, requests exclusive access when
+supported, and reconnects with a two-second backoff after USB or serial errors.
+The supervisor reapplies ownership after the stable FTDI path reappears or a
+generic Venus service reclaims `ttyUSB0`. Snapshots expose serial state, owner
+conflict, reconnect count, last valid timestamp, poll duration, and the last
+classified error.
 
 Inventory recovery is separate from normal telemetry polling. A complete
 address scan covers addresses 2–16 every 60 seconds during normal operation.
@@ -33,7 +43,10 @@ service is separately selected as the active battery monitor, GX displays:
 No partial current sum is published as authoritative. D-Bus publishing does
 not modify DVCC, charger settings, or battery configuration.
 
+Serial or USB failures do not count as inventory-removal scans. Only a
+completed full address scan can move a known battery into pending removal.
+
 For a Cerbo installation, copy both Python files in `scripts/` to the runtime
-directory and start the service under the existing Node-RED/supervision
-mechanism. The generated Node-RED flow starts the service in shadow mode and
-retains the JSON snapshot for the maintenance page.
+directory, install the runit files from `deploy/`, and let the root-supervised
+service own the serial adapter. The generated Node-RED flow reads the latest
+JSON snapshot for the maintenance page; it does not start the Python service.
