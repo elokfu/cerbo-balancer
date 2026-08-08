@@ -91,10 +91,14 @@ cell count, cell ranges, and reconstructed cell sum before publishing data.
 CID2 `0x61` is retained only for system voltage/SOC, and CID2 `0x63` supplies
 limits/status. No candidate Modbus register map is used.
 
-The deployed service performs one discovery scan over addresses 2–16 at
-startup, polls only the responding addresses thereafter, and rediscoveries
-every 60 seconds. If any discovered battery disappears, the complete battery
-set is invalidated and no partial current sum is published.
+The deployed service polls active batteries every two seconds.  Discovery over
+addresses 2–16 is incremental: normal operation performs one short, bounded
+probe after an active poll, completing a scan within the 60-second interval.
+If a known battery is missing, recovery performs three bounded probes per poll
+to complete a scan within ten seconds.  Inventory changes are applied only
+after a complete scan, so discovery timeouts cannot interrupt fresh active
+telemetry.  If a discovered battery disappears, the complete battery set is
+still invalidated and no partial current sum is published.
 
 The direct-CAN reader remains receive-only. DVCC, `can1`, battery DIP switches,
 and charger settings remain unchanged. The virtual BMS remains a TEST/shadow

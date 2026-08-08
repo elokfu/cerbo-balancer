@@ -139,6 +139,51 @@ class DynessServiceTests(unittest.TestCase):
         self.assertTrue(third["valid"])
         self.assertIn(0x44, calls)
 
+    def test_incremental_discovery_does_not_block_active_telemetry(self):
+        poller = ReadOnlyPoller("C:\\fake-dyness-rs485", 115200, 0.01)
+        poller.active_addresses = [2]
+        poller.next_discovery_at = time.monotonic()
+
+        system_data = bytearray(49)
+        system_data[0:2] = (54480).to_bytes(2, "big")
+        system_data[4] = 100
+        limits_info = f"{56500:04X}{48000:04X}{560:04X}{0xF83C:04X}C0"
+        cells = "".join(f"{3500:04X}" for _ in range(16))
+        pack_info = f"000210{cells}00{0:04X}{56000:04X}"
+        pack_info_3 = f"000310{cells}00{0:04X}{56000:04X}"
+        status_info = "00020000000000F70FE98140"
+        frames = {
+            0x61: response(2, 0x61, system_data.hex().upper()),
+            0x63: response(2, 0x63, limits_info),
+            0x42: response(2, 0x42, pack_info),
+            0x44: response(2, 0x44, status_info),
+        }
+        discovery_timeouts = []
+
+        poller._open_serial = lambda: object()
+        poller._owner_conflict = lambda: False
+
+        def query(_port, address, cid2, timeout=None):
+            if timeout is not None:
+                discovery_timeouts.append(timeout)
+            if cid2 == 0x42 and address == 3:
+                return response(3, 0x42, pack_info_3)
+            return frames[cid2] if address == 2 else None
+
+        poller.query = query
+        snapshots = [poller.poll() for _ in range(len(service.EXPECTED_ADDRESSES))]
+
+        self.assertTrue(all(snapshot["valid"] for snapshot in snapshots), [
+            (snapshot["valid"], snapshot["reason"], snapshot.get("expectedAddresses"),
+             [battery["address"] for battery in snapshot["batteries"]])
+            for snapshot in snapshots
+        ])
+        self.assertTrue(snapshots[0]["inventory"]["scanInProgress"])
+        self.assertEqual(snapshots[-1]["discovery"]["scanType"], "incremental-complete")
+        self.assertEqual(poller.active_addresses, [2, 3])
+        self.assertEqual(snapshots[-1]["expectedAddresses"], [2])
+        self.assertTrue(all(timeout == service.DISCOVERY_QUERY_TIMEOUT for timeout in discovery_timeouts))
+
     def test_active_command_is_arbitrated_by_bms_limits_and_temperature(self):
         snapshot = {
             "valid": True,

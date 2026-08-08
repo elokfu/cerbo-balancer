@@ -40,6 +40,12 @@ RECOVERY_DISCOVERY_INTERVAL = 10.0
 MAX_DISCOVERY_MISSES = 10
 SERIAL_RECONNECT_BACKOFF = 2.0
 STATUS44_INTERVAL = 5.0
+# Discovery must never monopolise the serial bus.  One normal probe per poll
+# completes a 2..16 scan in about 30 seconds; recovery uses three probes to
+# retain the required ten-second complete-scan cadence.
+NORMAL_DISCOVERY_PROBES_PER_POLL = 1
+RECOVERY_DISCOVERY_PROBES_PER_POLL = 3
+DISCOVERY_QUERY_TIMEOUT = 0.12
 
 
 def now_ms() -> int:
@@ -171,6 +177,7 @@ class ReadOnlyPoller:
         self.next_status_at = 0.0
         self.status44_cache: dict[int, dict[str, Any]] = {}
         self.last_discovery_at: int | None = None
+        self.discovery_scan: dict[str, Any] | None = None
         if inventory:
             self.load_inventory(inventory)
 
@@ -314,7 +321,10 @@ class ReadOnlyPoller:
 
     def inventory_snapshot(self) -> dict[str, Any]:
         interval = RECOVERY_DISCOVERY_INTERVAL if self.pending_removal else NORMAL_DISCOVERY_INTERVAL
-        remaining = max(0.0, self.next_discovery_at - time.monotonic()) if self.next_discovery_at else None
+        scan_in_progress = self.discovery_scan is not None
+        remaining = (0.0 if scan_in_progress else
+                     max(0.0, self.next_discovery_at - time.monotonic())
+                     if self.next_discovery_at else None)
         return {
             "activeAddresses": list(self.active_addresses),
             "pendingRemoval": [
@@ -331,6 +341,9 @@ class ReadOnlyPoller:
             "scanIntervalSeconds": interval,
             "nextDiscoveryInSeconds": round(remaining, 1) if remaining is not None else None,
             "lastDiscoveryAt": self.last_discovery_at,
+            "scanInProgress": scan_in_progress,
+            "scannedAddressCount": self.discovery_scan["index"] if scan_in_progress else 0,
+            "scanAddressCount": len(EXPECTED_ADDRESSES),
         }
 
     def decorate_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -365,11 +378,11 @@ class ReadOnlyPoller:
         interval = RECOVERY_DISCOVERY_INTERVAL if self.pending_removal else NORMAL_DISCOVERY_INTERVAL
         self.next_discovery_at = time.monotonic() + interval
 
-    def query(self, port: Any, address: int, cid2: int) -> bytes | None:
+    def query(self, port: Any, address: int, cid2: int, timeout: float | None = None) -> bytes | None:
         port.reset_input_buffer()
         port.write(request(address, cid2))
         port.flush()
-        deadline = time.monotonic() + self.timeout
+        deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
         frame = bytearray()
         started = False
         while time.monotonic() < deadline:
@@ -385,6 +398,47 @@ class ReadOnlyPoller:
                 if byte == b"\r":
                     return bytes(frame)
         return None
+
+    def _start_discovery(self) -> None:
+        if self.discovery_scan is None and time.monotonic() >= self.next_discovery_at:
+            self.discovery_scan = {"index": 0, "responding": set()}
+
+    def _advance_discovery(self, port: Any, active_batteries: dict[int, dict[str, Any]]) -> tuple[list[int], bool]:
+        """Probe a small bounded part of a complete inventory scan.
+
+        Active telemetry is gathered first.  Discovery replies are used only
+        to update inventory after every address has been checked, so a partial
+        scan can never make an otherwise healthy active pack incomplete.
+        """
+        self._start_discovery()
+        if self.discovery_scan is None:
+            return [], False
+        scan = self.discovery_scan
+        probes = (RECOVERY_DISCOVERY_PROBES_PER_POLL if self.pending_removal
+                  else NORMAL_DISCOVERY_PROBES_PER_POLL)
+        scanned: list[int] = []
+        while scan["index"] < len(EXPECTED_ADDRESSES) and len(scanned) < probes:
+            address = EXPECTED_ADDRESSES[scan["index"]]
+            scan["index"] += 1
+            scanned.append(address)
+            active = active_batteries.get(address)
+            if active is not None and active.get("valid"):
+                scan["responding"].add(address)
+                continue
+            frame = self.query(port, address, 0x42, DISCOVERY_QUERY_TIMEOUT)
+            if not frame:
+                continue
+            try:
+                if parse_pack_telemetry(frame, address).valid:
+                    scan["responding"].add(address)
+            except (UnicodeDecodeError, ValueError):
+                # A malformed discovery response is not a valid inventory hit.
+                continue
+        complete = scan["index"] >= len(EXPECTED_ADDRESSES)
+        if complete:
+            self.apply_discovery(sorted(scan["responding"]), now_ms())
+            self.discovery_scan = None
+        return scanned, complete
 
     def poll(self, command: dict[str, Any] | None = None) -> dict[str, Any]:
         started = time.monotonic()
@@ -430,9 +484,8 @@ class ReadOnlyPoller:
                     errors.append(f"CID2=63: {error}")
             else:
                 errors.append("CID2=63 timeout")
-            discovery_due = time.monotonic() >= self.next_discovery_at
             status_due = time.monotonic() >= self.next_status_at
-            addresses = EXPECTED_ADDRESSES if discovery_due else tuple(self.active_addresses)
+            addresses = tuple(self.active_addresses)
             status_errors: list[str] = []
             for address in addresses:
                 frame = self.query(port, address, 0x42)
@@ -490,10 +543,16 @@ class ReadOnlyPoller:
                     errors.append(f"CID2=42 address {address:02X}: {error}")
             if status_due:
                 self.next_status_at = time.monotonic() + STATUS44_INTERVAL
-            if discovery_due:
-                self.apply_discovery([item["address"] for item in batteries], now_ms())
+            # Preserve the expected set used for this active telemetry sample.
+            # A completed discovery can add a new battery, which is polled as
+            # active on the following two-second sample rather than causing a
+            # one-sample false "incomplete telemetry" fault.
+            expected_addresses_before_discovery = set(self.active_addresses)
+            discovery_scanned, discovery_complete = self._advance_discovery(
+                port, {item["address"]: item for item in batteries}
+            )
             valid_batteries = [item for item in batteries if item["valid"]]
-            expected_addresses = set(self.active_addresses)
+            expected_addresses = expected_addresses_before_discovery
             responding_addresses = {item["address"] for item in batteries}
             complete_battery_set = bool(expected_addresses) and not self.pending_removal and responding_addresses == expected_addresses
             cells = [(item["address"], cell) for item in valid_batteries for cell in item["effectiveCells"]]
@@ -507,9 +566,10 @@ class ReadOnlyPoller:
                 "source": "rs485-dyness", "serialPort": self.port_name, "baud": self.baud,
                 "reason": "; ".join(errors) if errors else None,
                 "system": system_values, "limits": limits,
-                "discovery": {"scannedAddresses": list(addresses),
+                "discovery": {"scannedAddresses": discovery_scanned or list(addresses),
                 "respondingAddresses": [item["address"] for item in batteries], "respondingCount": len(batteries),
-                "scanType": "full" if discovery_due else "active"},
+                "scanType": "incremental-complete" if discovery_complete else "incremental" if discovery_scanned else "active"},
+                "expectedAddresses": sorted(expected_addresses),
                 "batteries": batteries,
                 "status44Health": {
                     "state": "healthy" if not status_errors else "degraded",
