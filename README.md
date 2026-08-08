@@ -31,13 +31,17 @@ merging it with the existing Node-RED flow, retaining the existing
 `victron-client` configuration node. Dashboards are available at
 `/dashboard/balancer` and `/dashboard/balancer-maintenance`. The maintenance
 page refreshes every five seconds and shows system SOC/voltage, limits,
-per-battery voltage/current, all cells and their source, and temperatures.
+per-battery voltage/current, cell voltages, per-battery and all-pack spread,
+temperatures, and inventory recovery status. Normal discovery runs every 60
+seconds. When a known battery is missing, recovery scans run every 10 seconds
+and the battery is removed only after 10 failed scans.
 
 Persistent runtime files are stored on Cerbo under `/data/home/nodered/`:
 
 ```text
 /data/home/nodered/cerbo-balancer-config.json
 /data/home/nodered/cerbo-balancer-state.json
+/data/home/nodered/cerbo-balancer-rs485-inventory.json
 /data/home/nodered/cerbo-balancer-events.jsonl
 /data/home/nodered/cerbo-balancer-telemetry.jsonl
 /data/home/nodered/cerbo-balancer-sessions.jsonl

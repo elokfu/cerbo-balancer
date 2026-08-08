@@ -36,6 +36,9 @@ from dyness_rs485_protocol import (
 DEFAULT_PORT = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A602K5MM-if00-port0"
 DEFAULT_STATE_DIR = "/data/home/nodered"
 EXPECTED_ADDRESSES = tuple(range(2, 17))
+NORMAL_DISCOVERY_INTERVAL = 60.0
+RECOVERY_DISCOVERY_INTERVAL = 10.0
+MAX_DISCOVERY_MISSES = 10
 
 
 def now_ms() -> int:
@@ -70,6 +73,12 @@ class JsonlStore:
         target = self.root / name
         if not target.exists():
             target.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+
+    def write_json(self, name: str, value: dict[str, Any]) -> None:
+        target = self.root / name
+        temporary = target.with_name(f".{target.name}.tmp")
+        temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(target)
 
     def read_json(self, name: str) -> dict[str, Any] | None:
         try:
@@ -114,10 +123,116 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
 
 
 class ReadOnlyPoller:
-    def __init__(self, port: str, baud: int, timeout: float):
+    def __init__(self, port: str, baud: int, timeout: float, inventory: dict[str, Any] | None = None):
         self.port_name, self.baud, self.timeout = port, baud, timeout
-        self.discovered_addresses: list[int] = []
+        self.active_addresses: list[int] = []
+        self.pending_removal: dict[int, dict[str, Any]] = {}
+        self.last_seen_at: dict[int, int] = {}
         self.next_discovery_at = 0.0
+        self.last_discovery_at: int | None = None
+        if inventory:
+            self.load_inventory(inventory)
+
+    def load_inventory(self, inventory: dict[str, Any]) -> None:
+        active = inventory.get("activeAddresses", [])
+        active_addresses: set[int] = set()
+        for raw_address in active:
+            try:
+                address = int(raw_address)
+            except (TypeError, ValueError):
+                continue
+            if address in EXPECTED_ADDRESSES:
+                active_addresses.add(address)
+        self.active_addresses = sorted(active_addresses)
+        self.last_seen_at = {}
+        for raw_address, timestamp in (inventory.get("lastSeenAt", {}) or {}).items():
+            try:
+                address = int(raw_address)
+            except (TypeError, ValueError):
+                continue
+            if address in EXPECTED_ADDRESSES and isinstance(timestamp, (int, float)):
+                self.last_seen_at[address] = int(timestamp)
+        self.pending_removal = {}
+        for item in inventory.get("pendingRemoval", []) or []:
+            if not isinstance(item, dict):
+                continue
+            try:
+                address = int(item.get("address", -1))
+                missed = int(item.get("missedScans", 0))
+            except (TypeError, ValueError):
+                continue
+            if address in EXPECTED_ADDRESSES and 0 < missed < MAX_DISCOVERY_MISSES:
+                self.pending_removal[address] = {
+                    "missedScans": missed,
+                    "lastSeenAt": self.last_seen_at.get(address),
+                    "lastMissingAt": item.get("lastMissingAt"),
+                }
+        self.active_addresses = [address for address in self.active_addresses if address not in self.pending_removal]
+        self.next_discovery_at = 0.0
+
+    def export_inventory(self) -> dict[str, Any]:
+        return {
+            "version": 1,
+            "activeAddresses": list(self.active_addresses),
+            "pendingRemoval": [
+                {"address": address, **details}
+                for address, details in sorted(self.pending_removal.items())
+            ],
+            "lastSeenAt": {str(address): timestamp for address, timestamp in self.last_seen_at.items()},
+        }
+
+    def inventory_snapshot(self) -> dict[str, Any]:
+        interval = RECOVERY_DISCOVERY_INTERVAL if self.pending_removal else NORMAL_DISCOVERY_INTERVAL
+        remaining = max(0.0, self.next_discovery_at - time.monotonic()) if self.next_discovery_at else None
+        return {
+            "activeAddresses": list(self.active_addresses),
+            "pendingRemoval": [
+                {
+                    "address": address,
+                    "missedScans": details["missedScans"],
+                    "maxAttempts": MAX_DISCOVERY_MISSES,
+                    "lastSeenAt": details.get("lastSeenAt"),
+                    "lastMissingAt": details.get("lastMissingAt"),
+                }
+                for address, details in sorted(self.pending_removal.items())
+            ],
+            "discoveryMode": "recovery" if self.pending_removal else "normal",
+            "scanIntervalSeconds": interval,
+            "nextDiscoveryInSeconds": round(remaining, 1) if remaining is not None else None,
+            "lastDiscoveryAt": self.last_discovery_at,
+        }
+
+    def decorate_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        inventory = self.inventory_snapshot()
+        discovery = snapshot.setdefault("discovery", {})
+        discovery["activeAddresses"] = list(self.active_addresses)
+        discovery["pendingRemoval"] = inventory["pendingRemoval"]
+        discovery["scanIntervalSeconds"] = inventory["scanIntervalSeconds"]
+        discovery["nextDiscoveryInSeconds"] = inventory["nextDiscoveryInSeconds"]
+        snapshot["inventory"] = inventory
+        return snapshot
+
+    def apply_discovery(self, responding_addresses: list[int], timestamp: int) -> None:
+        responding = set(responding_addresses)
+        known = set(self.active_addresses) | set(self.pending_removal)
+        self.active_addresses = sorted(responding)
+        for address in responding:
+            self.last_seen_at[address] = timestamp
+            self.pending_removal.pop(address, None)
+        for address in sorted(known - responding):
+            details = self.pending_removal.setdefault(address, {
+                "missedScans": 0,
+                "lastSeenAt": self.last_seen_at.get(address),
+                "lastMissingAt": None,
+            })
+            details["missedScans"] += 1
+            details["lastMissingAt"] = timestamp
+            if details["missedScans"] >= MAX_DISCOVERY_MISSES:
+                self.pending_removal.pop(address, None)
+                self.last_seen_at.pop(address, None)
+        self.last_discovery_at = timestamp
+        interval = RECOVERY_DISCOVERY_INTERVAL if self.pending_removal else NORMAL_DISCOVERY_INTERVAL
+        self.next_discovery_at = time.monotonic() + interval
 
     def query(self, port: Any, address: int, cid2: int) -> str | None:
         port.reset_input_buffer()
@@ -144,11 +259,11 @@ class ReadOnlyPoller:
         if serial is None:
             snapshot = unavailable_snapshot("pyserial is unavailable", self.port_name, self.baud)
             snapshot["effectiveControl"] = effective_control(snapshot, command)
-            return snapshot
+            return self.decorate_snapshot(snapshot)
         if not os.path.exists(self.port_name):
             snapshot = unavailable_snapshot("RS485 adapter is disconnected", self.port_name, self.baud)
             snapshot["effectiveControl"] = effective_control(snapshot, command)
-            return snapshot
+            return self.decorate_snapshot(snapshot)
         try:
             with serial.Serial(self.port_name, baudrate=self.baud, bytesize=8,
                                parity=serial.PARITY_NONE, stopbits=1, timeout=0.05) as port:
@@ -176,8 +291,8 @@ class ReadOnlyPoller:
                         errors.append(f"CID2=63: {error}")
                 else:
                     errors.append("CID2=63 timeout")
-                discovery_due = time.monotonic() >= self.next_discovery_at or not self.discovered_addresses
-                addresses = EXPECTED_ADDRESSES if discovery_due else tuple(self.discovered_addresses)
+                discovery_due = time.monotonic() >= self.next_discovery_at
+                addresses = EXPECTED_ADDRESSES if discovery_due else tuple(self.active_addresses)
                 for address in addresses:
                     frame = self.query(port, address, 0x42)
                     if not frame:
@@ -191,12 +306,11 @@ class ReadOnlyPoller:
                     except ValueError as error:
                         errors.append(f"CID2=42 address {address:02X}: {error}")
                 if discovery_due:
-                    self.discovered_addresses = [item["address"] for item in batteries]
-                    self.next_discovery_at = time.monotonic() + 60.0
+                    self.apply_discovery([item["address"] for item in batteries], now_ms())
                 valid_batteries = [item for item in batteries if item["valid"]]
-                expected_addresses = set(self.discovered_addresses)
+                expected_addresses = set(self.active_addresses)
                 responding_addresses = {item["address"] for item in batteries}
-                complete_battery_set = bool(expected_addresses) and responding_addresses == expected_addresses
+                complete_battery_set = bool(expected_addresses) and not self.pending_removal and responding_addresses == expected_addresses
                 cells = [(item["address"], cell) for item in valid_batteries for cell in item["effectiveCells"]]
                 vmax_entry = max(cells, key=lambda entry: entry[1]["voltage"], default=(None, {"index": None, "voltage": None}))
                 vmin_entry = min(cells, key=lambda entry: entry[1]["voltage"], default=(None, {"index": None, "voltage": None}))
@@ -209,7 +323,8 @@ class ReadOnlyPoller:
                     "reason": "; ".join(errors) if errors else None,
                     "system": {"voltage61": system_voltage, "soc61": system_soc}, "limits": limits,
                     "discovery": {"scannedAddresses": list(addresses),
-                    "respondingAddresses": [item["address"] for item in batteries], "respondingCount": len(batteries)},
+                    "respondingAddresses": [item["address"] for item in batteries], "respondingCount": len(batteries),
+                    "scanType": "full" if discovery_due else "active"},
                     "batteries": batteries,
                     "aggregate": {"summedBatteryCurrent": sum(currents) if all_expected_valid else None,
                     "vmin": vmin_entry[1]["voltage"], "vmax": vmax_entry[1]["voltage"],
@@ -222,11 +337,11 @@ class ReadOnlyPoller:
                     "decoderHealth": "healthy" if not errors else "degraded", "rawFrames": raw_frames,
                 }
                 snapshot["effectiveControl"] = effective_control(snapshot, command)
-                return snapshot
+                return self.decorate_snapshot(snapshot)
         except Exception as error:  # serial errors must fail safe and be observable
             snapshot = unavailable_snapshot(f"serial poll failed: {error}", self.port_name, self.baud)
             snapshot["effectiveControl"] = effective_control(snapshot, command)
-            return snapshot
+            return self.decorate_snapshot(snapshot)
 
 
 def stop_serial_starter(port: str) -> None:
@@ -379,12 +494,13 @@ def main() -> int:
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--no-serial-starter-stop", action="store_true")
     args = parser.parse_args()
-    poller = ReadOnlyPoller(args.port, args.baud, args.timeout)
     store = JsonlStore(args.state_dir)
     store.ensure_json("cerbo-balancer-config.json", {"mode": "TEST", "enabled": False})
     store.ensure_json("cerbo-balancer-state.json", {"version": 1, "state": "NORMAL", "mode": "TEST"})
     store.ensure_json("cerbo-balancer-command.json", {"version": 0, "mode": "TEST"})
+    store.ensure_json("cerbo-balancer-rs485-inventory.json", {"version": 1, "activeAddresses": [], "pendingRemoval": [], "lastSeenAt": {}})
     store.ensure_json("cerbo-balancer-sessions.jsonl", {})
+    poller = ReadOnlyPoller(args.port, args.baud, args.timeout, store.read_json("cerbo-balancer-rs485-inventory.json"))
     dbus_publisher = DbusPublisher()
     serial_starter_stopped = False
     while True:
@@ -394,6 +510,7 @@ def main() -> int:
         if not os.path.exists(args.port):
             serial_starter_stopped = False
         snapshot = poller.poll(store.read_json("cerbo-balancer-command.json"))
+        store.write_json("cerbo-balancer-rs485-inventory.json", poller.export_inventory())
         store.append("cerbo-balancer-telemetry.jsonl", snapshot)
         dbus_publisher.update(snapshot)
         print(json.dumps(snapshot, separators=(",", ":")), flush=True)

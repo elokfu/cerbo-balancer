@@ -9,6 +9,47 @@ from dyness_rs485_service import JsonlStore, ReadOnlyPoller, effective_control  
 
 
 class DynessServiceTests(unittest.TestCase):
+    def test_missing_known_battery_is_pending_before_removal(self):
+        poller = ReadOnlyPoller("C:\\missing-dyness-rs485", 115200, 0.01)
+        poller.apply_discovery([2, 3], 1000)
+        poller.apply_discovery([3], 2000)
+
+        self.assertEqual(poller.active_addresses, [3])
+        self.assertEqual(poller.pending_removal[2]["missedScans"], 1)
+        self.assertEqual(poller.inventory_snapshot()["scanIntervalSeconds"], 10.0)
+
+        for attempt in range(2, 10):
+            poller.apply_discovery([3], 2000 + attempt)
+        self.assertIn(2, poller.pending_removal)
+        self.assertEqual(poller.pending_removal[2]["missedScans"], 9)
+
+        poller.apply_discovery([3], 2010)
+        self.assertNotIn(2, poller.pending_removal)
+        self.assertEqual(poller.active_addresses, [3])
+        self.assertEqual(poller.inventory_snapshot()["scanIntervalSeconds"], 60.0)
+
+    def test_returning_battery_is_restored_and_new_battery_is_added(self):
+        poller = ReadOnlyPoller("C:\\missing-dyness-rs485", 115200, 0.01)
+        poller.apply_discovery([2, 3], 1000)
+        poller.apply_discovery([3], 2000)
+        poller.apply_discovery([2, 3, 4], 3000)
+
+        self.assertEqual(poller.active_addresses, [2, 3, 4])
+        self.assertNotIn(2, poller.pending_removal)
+        self.assertEqual(poller.inventory_snapshot()["scanIntervalSeconds"], 60.0)
+
+    def test_inventory_retry_state_survives_reload(self):
+        inventory = {
+            "activeAddresses": [3],
+            "pendingRemoval": [{"address": 2, "missedScans": 4, "lastMissingAt": 2000}],
+            "lastSeenAt": {"2": 1000, "3": 2000},
+        }
+        poller = ReadOnlyPoller("C:\\missing-dyness-rs485", 115200, 0.01, inventory)
+
+        self.assertEqual(poller.active_addresses, [3])
+        self.assertEqual(poller.pending_removal[2]["missedScans"], 4)
+        self.assertEqual(poller.inventory_snapshot()["discoveryMode"], "recovery")
+
     def test_disconnected_adapter_is_explicitly_safe(self):
         snapshot = ReadOnlyPoller("C:\\missing-dyness-rs485", 115200, 0.01).poll()
         self.assertFalse(snapshot["valid"])

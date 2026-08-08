@@ -8,6 +8,8 @@ const templatePath = path.join(root, 'flow', 'cerbo-balancer-controller.template
 const outputPath = path.join(root, 'flow', 'cerbo-balancer-controller.json')
 
 const controller = fs.readFileSync(path.join(root, 'src', 'controller.js'), 'utf8')
+const maintenanceFormatter = fs.readFileSync(path.join(root, 'src', 'maintenance_formatter.js'), 'utf8')
+const maintenanceView = fs.readFileSync(path.join(root, 'src', 'maintenance_view.html'), 'utf8')
 const help = fs.readFileSync(path.join(root, 'docs', 'dashboard-help.md'), 'utf8')
 const template = fs.readFileSync(templatePath, 'utf8')
 const flow = JSON.parse(template
@@ -28,6 +30,12 @@ controllerNode.func = controllerNode.func.replace(
 const rs485ServiceNode = flow.find(node => node.id === 'bal-rs485-service')
 if (!rs485ServiceNode) throw new Error('bal-rs485-service node is missing from the flow template')
 rs485ServiceNode.command += ' --no-serial-starter-stop'
+const maintenanceFormatterNode = flow.find(node => node.id === 'bal-maint-format')
+if (!maintenanceFormatterNode) throw new Error('bal-maint-format node is missing from the flow template')
+maintenanceFormatterNode.func = maintenanceFormatter
+const maintenanceViewNode = flow.find(node => node.id === 'bal-maintenance')
+if (!maintenanceViewNode) throw new Error('bal-maintenance node is missing from the flow template')
+maintenanceViewNode.format = maintenanceView
 
 const rendered = `${JSON.stringify(flow, null, 2)}\n`
 if (process.argv.includes('--check')) {

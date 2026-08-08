@@ -11,6 +11,16 @@ The adapter is optional during development. If it is disconnected, the service
 emits a timestamped invalid snapshot, keeps CCL/DCL at zero, and does not
 allow ACTIVE controller operation.
 
+Inventory recovery is separate from normal telemetry polling. A complete
+address scan covers addresses 2–16 every 60 seconds during normal operation.
+Only active responding addresses receive CID2 `0x42` data polls. If a known
+battery disappears during a full scan, it is removed from active polling and
+retained as pending removal. Full recovery scans run every 10 seconds while a
+battery is pending; removal occurs after 10 consecutive failed scans. A
+returning or newly discovered battery is activated immediately. Inventory and
+missed-scan counters are persisted in
+`/data/home/nodered/cerbo-balancer-rs485-inventory.json`.
+
 The service owns the virtual D-Bus name
 `com.victronenergy.battery.rs485_dyness` with DeviceInstance `100`. Once that
 service is separately selected as the active battery monitor, GX displays:
