@@ -132,7 +132,7 @@ class CsvLogger:
         "present", "valid", "voltage_v", "current_a", "status1", "status2",
         "status3", "status4", "status5",
         *[f"cell_{index:02d}_v" for index in range(1, 17)],
-        *[f"temp_{index:02d}_c" for index in range(1, 33)],
+        *[f"temp_{index:02d}_c" for index in range(1, 6)],
     ]
 
     def __init__(self, root: str):
@@ -189,6 +189,16 @@ class CsvLogger:
     def _stop(self, filename: str, reason: str) -> dict[str, Any]:
         self.stopped = True
         return {"stopped": True, "filename": filename, "reason": reason}
+
+    @staticmethod
+    def _format_cell_voltage(value: Any) -> str:
+        """Return a cell voltage in volts with a fixed three decimals."""
+        if not isinstance(value, (int, float)):
+            return ""
+        voltage = float(value)
+        if abs(voltage) > 10:
+            voltage /= 1000.0
+        return f"{voltage:.3f}"
 
     def write(self, snapshot: dict[str, Any], control: dict[str, Any] | None) -> dict[str, Any]:
         if not control or control.get("enabled") is not True:
@@ -250,11 +260,11 @@ class CsvLogger:
             prefix = f"battery_{address:02d}_"; row[prefix + "present"] = True; row[prefix + "valid"] = battery.get("valid"); row[prefix + "voltage_v"] = battery.get("voltage"); row[prefix + "current_a"] = battery.get("current")
             status = battery.get("status44") or {}
             for index in range(1, 6): row[prefix + f"status{index}"] = (status.get(f"status{index}") or {}).get("raw")
-            for cell in battery.get("effectiveCells") or []: row[prefix + f"cell_{int(cell.get('index')):02d}_v"] = cell.get("voltage")
+            for cell in battery.get("effectiveCells") or []: row[prefix + f"cell_{int(cell.get('index')):02d}_v"] = self._format_cell_voltage(cell.get("voltage"))
             for index, value in enumerate(battery.get("temperatures") or [], 1): row[prefix + f"temp_{index:02d}_c"] = value
         with target.open("a", newline="", encoding="utf-8") as stream:
             if not exists:
-                stream.write(f"# schema_version=3\n# serial_port={snapshot.get('serialPort')}\n# baud={snapshot.get('baud')}\n# poll_interval_seconds=6\n# timestamp_format=HH:MM:SS local Cerbo time\n# initial_addresses={','.join(str(address) for address in self.initial_addresses)}\n")
+                stream.write(f"# schema_version=4\n# serial_port={snapshot.get('serialPort')}\n# baud={snapshot.get('baud')}\n# poll_interval_seconds=6\n# timestamp_format=HH:MM:SS local Cerbo time\n# initial_addresses={','.join(str(address) for address in self.initial_addresses)}\n")
                 csv.DictWriter(stream, fieldnames=columns).writeheader()
             csv.DictWriter(stream, fieldnames=columns).writerow(row)
         self.next_sample_number += 1

@@ -297,7 +297,10 @@ class DynessServiceTests(unittest.TestCase):
                 "aggregate": {"vmin": 3.317, "vmax": 3.329, "spread": 0.012,
                               "summedBatteryCurrent": 1.5},
                 "batteries": [{"address": address, "valid": True, "voltage": 53.25,
-                               "current": 1.5, "effectiveCells": [], "temperatures": []}
+                               "current": 1.5,
+                               "effectiveCells": [{"index": 1, "voltage": 3317},
+                                                   {"index": 2, "voltage": 3.329}],
+                               "temperatures": [26.0, 26.1, 26.2, 26.3, 26.4]}
                               for address in addresses],
             }
 
@@ -320,11 +323,14 @@ class DynessServiceTests(unittest.TestCase):
             self.assertIn("battery_02_voltage_v", header)
             self.assertIn("battery_03_voltage_v", header)
             self.assertNotIn("battery_04_voltage_v", header)
+            self.assertIn("battery_02_temp_05_c", header)
+            self.assertNotIn("battery_02_temp_06_c", header)
             self.assertIn("timestamp,sample_number,", header)
             rows = [line for line in lines if line and not line.startswith("#")]
             self.assertEqual(len(rows), 3)
             self.assertRegex(rows[1].split(",", 2)[0], r"^\d{2}:\d{2}:\d{2}$")
             self.assertEqual(rows[2].split(",", 2)[1], "2")
+            self.assertIn(",3.317,3.329,", rows[1])
 
 
 if __name__ == "__main__":
