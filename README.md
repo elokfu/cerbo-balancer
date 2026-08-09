@@ -6,10 +6,10 @@ CID2 `0x42`, `0x44`, `0x61`, and `0x63` read requests.
 
 CID2 `0x42` is authoritative for each battery's cells, voltage, signed
 current, and temperatures. When 15 cells are returned, cell 16 is calculated
-from that same battery's CID2 `0x42` voltage. CID2 `0x61` is only a system
-voltage/SOC cross-check and is never used to reconstruct a cell. Victron DVCC
-remains enabled; the battery source is selected manually in Cerbo for
-commissioning.
+from that same battery's CID2 `0x42` voltage. CID2 `0x61` supplies the
+authoritative pack-wide Vmin, Vmax, spread, and packed battery/cell locations;
+it is never used to reconstruct a cell. Victron DVCC remains enabled; the
+battery source is selected manually in Cerbo for commissioning.
 
 ## Current commissioning boundary
 
