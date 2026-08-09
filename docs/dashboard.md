@@ -7,6 +7,11 @@ accepts a fresh complete telemetry sample for up to 15 seconds, allowing a
 complete three-battery polling cycle and a bounded delayed retry without a
 false stale-telemetry fault.
 
+The maintenance page reads the latest parsed snapshot from
+`/data/home/nodered/cerbo-balancer-latest.json`. Detailed parsed history is
+retained for 24 hours, while the independent compact monthly summary is
+recorded every 60 seconds for 30 days. Raw RS485 protocol data is not stored.
+
 The dashboard reconnects automatically after a page reload or short network
 interruption. The shared Dashboard configuration suppresses the transient
 `Connection Lost` toast caused by the old page's socket closing during a

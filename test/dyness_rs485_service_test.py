@@ -1,5 +1,7 @@
 import sys
 import csv
+import json
+import os
 import tempfile
 import time
 import unittest
@@ -403,6 +405,96 @@ class DynessServiceTests(unittest.TestCase):
             store = JsonlStore(directory)
             store.ensure_json("cerbo-balancer-config.json", {"mode": "TEST"})
             self.assertEqual(store.read_json("cerbo-balancer-config.json")["mode"], "TEST")
+
+    def test_rolling_telemetry_redacts_raw_data_and_writes_compact_summary(self):
+        timestamp = 1_700_000_000_000
+        snapshot = {
+            "timestamp": timestamp,
+            "valid": True,
+            "source": "rs485-dyness",
+            "rawFrames": [{"cid2": "42", "frame": "secret"}],
+            "system": {"voltage61": 53.25, "soc61": 98, "trailingHex61": "DEAD"},
+            "inventory": {"activeAddresses": [2, 3]},
+            "expectedAddresses": [2, 3],
+            "aggregate": {
+                "vmin": 3.317, "vmax": 3.329,
+                "minCellAddress": 2, "minCellIndex": 11,
+                "maxCellAddress": 3, "maxCellIndex": 7,
+                "summedBatteryCurrent": 3.0,
+            },
+            "batteries": [
+                {
+                    "address": address, "valid": True, "current": 1.5,
+                    "rawInfo": "SECRET", "trailingInfo": "SECRET",
+                    "rawCapacityTail": "SECRET",
+                    "status44": {"rawInfo": "SECRET", "trailingInfo": "SECRET", "status1": {"raw": 0}},
+                }
+                for address in (2, 3)
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            store = service.RollingTelemetryStore(directory)
+            store.record(snapshot)
+            snapshot["timestamp"] = timestamp + 60_000
+            store.record(snapshot)
+            latest = json.loads((Path(directory) / service.DETAILED_TELEMETRY_LATEST).read_text())
+            summary_lines = (Path(directory) / service.SUMMARY_LOG_NAME).read_text().splitlines()
+            detailed = list((Path(directory) / service.DETAILED_TELEMETRY_DIRECTORY).glob("*.jsonl"))
+            persisted = json.loads(detailed[0].read_text().splitlines()[0])
+
+            self.assertNotIn("rawFrames", latest)
+            self.assertNotIn("trailingHex61", latest["system"])
+            self.assertNotIn("rawInfo", latest["batteries"][0])
+            self.assertNotIn("trailingInfo", latest["batteries"][0])
+            self.assertNotIn("rawCapacityTail", latest["batteries"][0])
+            self.assertNotIn("rawInfo", latest["batteries"][0]["status44"])
+            self.assertNotIn("rawFrames", persisted)
+            self.assertEqual(len(summary_lines), 2)
+            summary = json.loads(summary_lines[-1])
+            self.assertEqual(summary["vminBattery"], 2)
+            self.assertEqual(summary["vminCell"], 11)
+            self.assertEqual(summary["vmaxBattery"], 3)
+            self.assertEqual(summary["vmaxCell"], 7)
+            self.assertEqual(summary["totalBatteryCurrentA"], 3.0)
+            self.assertEqual(summary["batteryCurrents"], [
+                {"battery": 2, "currentA": 1.5},
+                {"battery": 3, "currentA": 1.5},
+            ])
+
+    def test_rolling_summary_does_not_publish_partial_total_current(self):
+        timestamp = 1_700_000_000_000
+        snapshot = {
+            "timestamp": timestamp, "valid": False, "source": "rs485-dyness",
+            "system": {"voltage61": 53.25, "soc61": 98},
+            "inventory": {"activeAddresses": [2, 3]}, "expectedAddresses": [2, 3],
+            "aggregate": {"vmin": 3.317, "vmax": 3.329, "summedBatteryCurrent": 3.0},
+            "batteries": [{"address": 2, "valid": True, "current": 1.5}],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            store = service.RollingTelemetryStore(directory)
+            store.record(snapshot)
+            summary = json.loads((Path(directory) / service.SUMMARY_LOG_NAME).read_text())
+            self.assertIsNone(summary["totalBatteryCurrentA"])
+            self.assertEqual(summary["batteryCurrents"], [{"battery": 2, "currentA": 1.5}])
+
+    def test_rolling_logs_prune_old_detailed_segments_and_summary_rows(self):
+        timestamp = 1_700_000_000_000
+        with tempfile.TemporaryDirectory() as directory:
+            detailed_directory = Path(directory) / service.DETAILED_TELEMETRY_DIRECTORY
+            detailed_directory.mkdir()
+            old_segment = detailed_directory / "telemetry-20000101-00.jsonl"
+            old_segment.write_text('{"timestamp":0}\n')
+            os.utime(old_segment, (0, 0))
+            summary_path = Path(directory) / service.SUMMARY_LOG_NAME
+            summary_path.write_text('{"timestamp":0}\n')
+            snapshot = {
+                "timestamp": timestamp, "valid": False, "source": "rs485-dyness",
+                "system": {}, "inventory": {}, "expectedAddresses": [],
+                "aggregate": {}, "batteries": [],
+            }
+            service.RollingTelemetryStore(directory).record(snapshot)
+            self.assertFalse(old_segment.exists())
+            self.assertNotIn('{"timestamp":0}', summary_path.read_text())
 
     def test_csv_schema_is_fixed_to_start_inventory_and_stops_on_missing_battery(self):
         self.assertEqual(service.CsvLogger._format_voltage(3343), "3.34")

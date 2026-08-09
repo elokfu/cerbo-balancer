@@ -83,8 +83,24 @@ completed full address scan can move a known battery into pending removal.
 
 For a Cerbo installation, copy both Python files in `scripts/` to the runtime
 directory, install the runit files from `deploy/`, and let the root-supervised
-service own the serial adapter. The generated Node-RED flow reads the latest
-JSON snapshot for the maintenance page; it does not start the Python service.
+service own the serial adapter. The generated Node-RED flow reads
+`/data/home/nodered/cerbo-balancer-latest.json` for the maintenance page; it
+does not start the Python service.
+
+## Telemetry retention
+
+The service publishes only parsed RS485 telemetry. Raw response frames,
+`rawInfo`, trailing protocol fields, and raw capacity tails are removed before
+the snapshot is published or persisted. Detailed parsed history is written as
+hourly JSONL segments below
+`/data/home/nodered/cerbo-balancer-telemetry/` and pruned to 24 hours. The
+maintenance page reads the newest snapshot from
+`/data/home/nodered/cerbo-balancer-latest.json`.
+
+An independent compact summary is written every 60 seconds to
+`/data/home/nodered/cerbo-balancer-summary.jsonl` and retained for 30 days. It
+contains timestamp, SOC, system voltage, Vmin/Vmax with battery and cell
+locations, valid total battery current, and available per-battery currents.
 
 ## CSV session logging
 

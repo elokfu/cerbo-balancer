@@ -52,9 +52,15 @@ Persistent runtime files are stored on Cerbo under `/data/home/nodered/`:
 /data/home/nodered/cerbo-balancer-state.json
 /data/home/nodered/cerbo-balancer-rs485-inventory.json
 /data/home/nodered/cerbo-balancer-events.jsonl
-/data/home/nodered/cerbo-balancer-telemetry.jsonl
 /data/home/nodered/cerbo-balancer-sessions.jsonl
 ```
+
+Detailed RS485 telemetry is written as parsed hourly JSONL segments below
+`/data/home/nodered/cerbo-balancer-telemetry/` and retained for 24 hours. The
+latest parsed snapshot is `/data/home/nodered/cerbo-balancer-latest.json`.
+The compact monthly summary is written every 60 seconds to
+`/data/home/nodered/cerbo-balancer-summary.jsonl` and retained for 30 days.
+Raw RS485 frames and protocol payloads are not persisted.
 
 Install `deploy/cerbo-balancer-rs485-run` as a root-supervised runit service.
 It exclusively claims `ttyUSB0`, stops Venus generic serial services assigned

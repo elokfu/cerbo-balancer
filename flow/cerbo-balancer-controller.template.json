@@ -276,7 +276,7 @@
     "id": "bal-rs485-read",
     "type": "exec",
     "z": "bal-tab",
-    "command": "tail -n 1 /data/home/nodered/cerbo-balancer-telemetry.jsonl",
+    "command": "cat /data/home/nodered/cerbo-balancer-latest.json",
     "addpay": false,
     "append": "",
     "useSpawn": "true",

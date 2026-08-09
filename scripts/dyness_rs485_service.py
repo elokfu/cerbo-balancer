@@ -17,7 +17,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -38,6 +38,12 @@ from dyness_rs485_protocol import (
 DEFAULT_PORT = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A602K5MM-if00-port0"
 DEFAULT_STATE_DIR = "/data/home/nodered"
 CSV_LOG_DIRECTORY = "cerbo-balancer-csv"
+DETAILED_TELEMETRY_DIRECTORY = "cerbo-balancer-telemetry"
+DETAILED_TELEMETRY_LATEST = "cerbo-balancer-latest.json"
+SUMMARY_LOG_NAME = "cerbo-balancer-summary.jsonl"
+DETAILED_RETENTION_MS = 24 * 60 * 60 * 1000
+SUMMARY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+SUMMARY_INTERVAL_MS = 60 * 1000
 EXPECTED_ADDRESSES = tuple(range(2, 17))
 NORMAL_DISCOVERY_INTERVAL = 60.0
 RECOVERY_DISCOVERY_INTERVAL = 10.0
@@ -137,6 +143,159 @@ class JsonlStore:
             return value if isinstance(value, dict) else None
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             return None
+
+
+def parsed_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Remove protocol payloads before a snapshot is published or persisted."""
+    value = json.loads(json.dumps(snapshot))
+    value.pop("rawFrames", None)
+    system = value.get("system")
+    if isinstance(system, dict):
+        system.pop("trailingHex61", None)
+    for battery in value.get("batteries") or []:
+        if not isinstance(battery, dict):
+            continue
+        for key in ("rawInfo", "trailingInfo", "rawCapacityTail"):
+            battery.pop(key, None)
+        status = battery.get("status44")
+        if isinstance(status, dict):
+            status.pop("rawInfo", None)
+            status.pop("trailingInfo", None)
+    return value
+
+
+class RollingTelemetryStore:
+    """Persist parsed detailed telemetry and a compact monthly summary."""
+
+    def __init__(self, root: str):
+        self.root = Path(root)
+        self.detailed_directory = self.root / DETAILED_TELEMETRY_DIRECTORY
+        self.detailed_directory.mkdir(parents=True, exist_ok=True)
+        self.summary_path = self.root / SUMMARY_LOG_NAME
+        self.latest_path = self.root / DETAILED_TELEMETRY_LATEST
+        self.timezone_name, self.timezone = cerbo_timezone()
+        self.last_summary_timestamp: int | None = self._read_last_summary_timestamp()
+        self.last_detailed_prune = 0
+        self.last_summary_prune = 0
+
+    @staticmethod
+    def _segment_name(timestamp: int) -> str:
+        value = datetime.fromtimestamp(timestamp / 1000, timezone.utc)
+        return f"telemetry-{value:%Y%m%d-%H}.jsonl"
+
+    def _read_last_summary_timestamp(self) -> int | None:
+        try:
+            with self.summary_path.open("rb") as stream:
+                stream.seek(0, os.SEEK_END)
+                position = stream.tell()
+                stream.seek(max(0, position - 8192))
+                lines = stream.read().decode("utf-8", errors="ignore").splitlines()
+            for line in reversed(lines):
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                timestamp = value.get("timestamp")
+                if isinstance(timestamp, int):
+                    return timestamp
+        except OSError:
+            pass
+        return None
+
+    @staticmethod
+    def _append(path: Path, value: dict[str, Any]) -> None:
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(value, separators=(",", ":")) + "\n")
+
+    @staticmethod
+    def _replace_with_lines(path: Path, lines: list[str]) -> None:
+        temporary = path.with_name(f".{path.name}.tmp")
+        temporary.write_text("".join(lines), encoding="utf-8")
+        temporary.replace(path)
+
+    def _prune_detailed(self, timestamp: int) -> None:
+        if timestamp - self.last_detailed_prune < 60 * 60 * 1000:
+            return
+        cutoff = timestamp - DETAILED_RETENTION_MS
+        for path in self.detailed_directory.glob("telemetry-*.jsonl"):
+            try:
+                if path.stat().st_mtime * 1000 < cutoff:
+                    path.unlink()
+            except OSError:
+                continue
+        self.last_detailed_prune = timestamp
+
+    def _prune_summary(self, timestamp: int) -> None:
+        if timestamp - self.last_summary_prune < 60 * 60 * 1000 or not self.summary_path.exists():
+            return
+        cutoff = timestamp - SUMMARY_RETENTION_MS
+        retained: list[str] = []
+        try:
+            with self.summary_path.open("r", encoding="utf-8") as stream:
+                for line in stream:
+                    try:
+                        value = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(value.get("timestamp"), int) and value["timestamp"] >= cutoff:
+                        retained.append(json.dumps(value, separators=(",", ":")) + "\n")
+            self._replace_with_lines(self.summary_path, retained)
+        except OSError:
+            pass
+        self.last_summary_prune = timestamp
+
+    def _summary(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        system = snapshot.get("system") or {}
+        aggregate = snapshot.get("aggregate") or {}
+        batteries = snapshot.get("batteries") or []
+        inventory = snapshot.get("inventory") or {}
+        expected = set(snapshot.get("expectedAddresses") or inventory.get("activeAddresses") or [])
+        responding = {battery.get("address") for battery in batteries}
+        complete = bool(snapshot.get("valid") is True and expected and expected == responding and all(
+            battery.get("valid") is True for battery in batteries
+        ))
+        valid = snapshot.get("valid") is True
+        battery_currents = [
+            {"battery": battery.get("address"), "currentA": battery.get("current")}
+            for battery in batteries
+            if battery.get("valid") is True and isinstance(battery.get("current"), (int, float))
+        ]
+        timestamp = snapshot.get("timestamp")
+        if not isinstance(timestamp, int):
+            timestamp = now_ms()
+        local_time = datetime.fromtimestamp(timestamp / 1000, self.timezone).strftime("%Y-%m-%d %H:%M:%S")
+        return {
+            "timestamp": timestamp,
+            "localTime": local_time,
+            "socPercent": system.get("soc61") if valid else None,
+            "systemVoltageV": system.get("voltage61") if valid else None,
+            "vminV": aggregate.get("vmin") if valid else None,
+            "vminBattery": aggregate.get("minCellAddress") if valid else None,
+            "vminCell": aggregate.get("minCellIndex") if valid else None,
+            "vmaxV": aggregate.get("vmax") if valid else None,
+            "vmaxBattery": aggregate.get("maxCellAddress") if valid else None,
+            "vmaxCell": aggregate.get("maxCellIndex") if valid else None,
+            "totalBatteryCurrentA": aggregate.get("summedBatteryCurrent") if complete else None,
+            "batteryCurrents": battery_currents,
+        }
+
+    def record(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        value = parsed_snapshot(snapshot)
+        timestamp = value.get("timestamp")
+        if not isinstance(timestamp, int):
+            timestamp = now_ms()
+            value["timestamp"] = timestamp
+        self._append(self.detailed_directory / self._segment_name(timestamp), value)
+        temporary = self.latest_path.with_name(f".{self.latest_path.name}.tmp")
+        temporary.write_text(json.dumps(value, separators=(",", ":")) + "\n", encoding="utf-8")
+        temporary.replace(self.latest_path)
+        if self.last_summary_timestamp is None or timestamp - self.last_summary_timestamp >= SUMMARY_INTERVAL_MS:
+            summary = self._summary(value)
+            self._append(self.summary_path, summary)
+            self.last_summary_timestamp = timestamp
+        self._prune_detailed(timestamp)
+        self._prune_summary(timestamp)
+        return value
 
 
 class CsvLogger:
@@ -1073,14 +1232,15 @@ def main() -> int:
     poller = ReadOnlyPoller(args.port, args.baud, args.timeout, store.read_json("cerbo-balancer-rs485-inventory.json"))
     dbus_publisher = DbusPublisher()
     csv_logger = CsvLogger(args.state_dir)
+    telemetry_store = RollingTelemetryStore(args.state_dir)
     while True:
         cycle_started = time.monotonic()
         snapshot = poller.poll(store.read_json("cerbo-balancer-command.json"))
         csv_logger.write(snapshot, store.read_json("cerbo-balancer-csv-logging.json"))
         store.write_json("cerbo-balancer-rs485-inventory.json", poller.export_inventory())
-        store.append("cerbo-balancer-telemetry.jsonl", snapshot)
-        dbus_publisher.update(snapshot)
-        print(json.dumps(snapshot, separators=(",", ":")), flush=True)
+        published_snapshot = telemetry_store.record(snapshot)
+        dbus_publisher.update(published_snapshot)
+        print(json.dumps(published_snapshot, separators=(",", ":")), flush=True)
         if args.once:
             return 0
         # Keep the requested cadence measured from the start of each poll.
