@@ -244,6 +244,13 @@ class CsvLogger:
         return f"{float(value):.{decimals}f}"
 
     @staticmethod
+    def _format_status_byte(value: Any) -> str:
+        """Format a CID2 0x44 status byte as a fixed two-digit hex value."""
+        if not isinstance(value, (int, float)) or not 0 <= value <= 0xFF:
+            return ""
+        return f"0x{int(value):02X}"
+
+    @staticmethod
     def _format_spread_mv(value: Any) -> str:
         if not isinstance(value, (int, float)):
             return ""
@@ -351,12 +358,15 @@ class CsvLogger:
                 continue
             prefix = f"battery_{address:02d}_"; row[prefix + "present"] = True; row[prefix + "valid"] = battery.get("valid"); row[prefix + "voltage_v"] = self._format_voltage(battery.get("voltage")); row[prefix + "current_a"] = self._format_number(battery.get("current"))
             status = battery.get("status44") or {}
-            for index in range(1, 6): row[prefix + f"status{index}"] = (status.get(f"status{index}") or {}).get("raw")
+            for index in range(1, 6):
+                row[prefix + f"status{index}"] = self._format_status_byte(
+                    (status.get(f"status{index}") or {}).get("raw")
+                )
             for cell in battery.get("effectiveCells") or []: row[prefix + f"cell_{int(cell.get('index')):02d}_v"] = self._format_cell_voltage(cell.get("voltage"))
             for index, value in enumerate(battery.get("temperatures") or [], 1): row[prefix + f"temp_{index:02d}_c"] = value
         with target.open("a", newline="", encoding="utf-8") as stream:
             if not exists:
-                stream.write(f"# schema_version=9\n# serial_port={snapshot.get('serialPort')}\n# baud={snapshot.get('baud')}\n# poll_interval_seconds=6\n# timestamp_format=HH:MM:SS {self.timezone_name}\n# virtual_bms_service=com.victronenergy.battery.rs485_dyness\n# virtual_bms_device_instance=100\n# dvcc_output_mode=TEST/shadow\n# initial_addresses={','.join(str(address) for address in self.initial_addresses)}\n")
+                stream.write(f"# schema_version=10\n# serial_port={snapshot.get('serialPort')}\n# baud={snapshot.get('baud')}\n# poll_interval_seconds=6\n# timestamp_format=HH:MM:SS {self.timezone_name}\n# virtual_bms_service=com.victronenergy.battery.rs485_dyness\n# virtual_bms_device_instance=100\n# dvcc_output_mode=TEST/shadow\n# status1_bits=bit7 pack under-voltage protection; bit6 charge temperature protection; bit5 discharge temperature protection; bit4 discharge over-current protection; bit3 reserved; bit2 charge over-current protection; bit1 cell under-voltage protection; bit0 over-voltage protection\n# status2_bits=bit7-bit4 reserved; bit3 module power active; bit2 discharge MOSFET on; bit1 charge MOSFET on; bit0 precharge MOSFET on\n# status3_bits=bit7 effective charging; bit6 effective discharging; bit5 heater active; bit4-bit2 reserved; bit3 fully charged; bit2-bit1 reserved; bit0 buzzer active\n# status4_bits=bit7-bit0 cell voltage-check faults for cells 8-1 respectively\n# status5_bits=bit7-bit0 cell voltage-check faults for cells 16-9 respectively\n# initial_addresses={','.join(str(address) for address in self.initial_addresses)}\n")
                 csv.DictWriter(stream, fieldnames=columns).writeheader()
             csv.DictWriter(stream, fieldnames=columns).writerow(row)
         self.next_sample_number += 1

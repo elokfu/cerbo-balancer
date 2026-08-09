@@ -408,6 +408,9 @@ class DynessServiceTests(unittest.TestCase):
         self.assertEqual(service.CsvLogger._format_voltage(3343), "3.34")
         self.assertEqual(service.CsvLogger._format_voltage(53.25), "53.25")
         self.assertEqual(service.CsvLogger._format_cell_voltage(3343), "3.343")
+        self.assertEqual(service.CsvLogger._format_status_byte(0), "0x00")
+        self.assertEqual(service.CsvLogger._format_status_byte(0xF7), "0xF7")
+        self.assertEqual(service.CsvLogger._format_status_byte(0x100), "")
         self.assertEqual(service.CsvLogger._format_voltage(3.335), "3.33")
         self.assertEqual(service.CsvLogger._format_voltage(3.335, 3), "3.335")
         self.assertEqual(service.CsvLogger._format_spread_mv(0.007999999), "8")
@@ -429,6 +432,13 @@ class DynessServiceTests(unittest.TestCase):
                               "summedBatteryCurrent": 1.5},
                 "batteries": [{"address": address, "valid": True, "voltage": 53.25,
                                "current": 1.5,
+                               "status44": {
+                                   "status1": {"raw": 0x00},
+                                   "status2": {"raw": 0x0F},
+                                   "status3": {"raw": 0xC9},
+                                   "status4": {"raw": 0x00},
+                                   "status5": {"raw": 0x80},
+                               },
                                "effectiveCells": [{"index": 1, "voltage": 3317},
                                                    {"index": 2, "voltage": 3.329}],
                                "temperatures": [26.0, 26.1, 26.2, 26.3, 26.4]}
@@ -451,6 +461,11 @@ class DynessServiceTests(unittest.TestCase):
             self.assertTrue(stopped["stopped"])
             self.assertTrue(after_stop["stopped"])
             self.assertIn("# initial_addresses=2,3", lines)
+            self.assertTrue(any(line.startswith("# status1_bits=") for line in lines))
+            self.assertTrue(any(line.startswith("# status2_bits=") for line in lines))
+            self.assertTrue(any(line.startswith("# status3_bits=") for line in lines))
+            self.assertTrue(any(line.startswith("# status4_bits=") for line in lines))
+            self.assertTrue(any(line.startswith("# status5_bits=") for line in lines))
             header = next(line for line in lines if not line.startswith("#"))
             self.assertIn("battery_02_voltage_v", header)
             self.assertIn("battery_03_voltage_v", header)
@@ -469,6 +484,11 @@ class DynessServiceTests(unittest.TestCase):
             self.assertEqual(csv_rows[0]["vmin_v"], "3.317")
             self.assertEqual(csv_rows[0]["vmax_v"], "3.329")
             self.assertEqual(csv_rows[0]["battery_02_cell_01_v"], "3.317")
+            self.assertEqual(csv_rows[0]["battery_02_status1"], "0x00")
+            self.assertEqual(csv_rows[0]["battery_02_status2"], "0x0F")
+            self.assertEqual(csv_rows[0]["battery_02_status3"], "0xC9")
+            self.assertEqual(csv_rows[0]["battery_02_status4"], "0x00")
+            self.assertEqual(csv_rows[0]["battery_02_status5"], "0x80")
 
 
 if __name__ == "__main__":

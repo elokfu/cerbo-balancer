@@ -96,11 +96,15 @@ initial inventory is absent from a later sample, the service stops that
 recording session rather than writing partial rows.
 
 The CSV header contains the constant serial metadata, virtual-BMS identity,
-shadow-mode marker, and initial battery addresses. Each battery contributes 16
-cell-voltage fields and five temperature fields. Cell voltages are always
-written in volts with three decimal places. Pack voltages, temperatures,
-currents, and spreads are written with two decimal places, except pack Vmin/Vmax
-which use three decimal places; spreads are whole millivolts. Per-battery
+shadow-mode marker, initial battery addresses, and bit explanations for the
+CID2 `0x44` Status1–Status5 registers. Those five status columns are written as
+fixed two-digit hexadecimal bytes (`0x00` through `0xFF`), so the raw register
+value is immediately comparable with the bit legend in the header. Each battery
+contributes 16 cell-voltage fields and five temperature fields. Cell voltages
+are always written in volts with three decimal places. Pack voltages,
+temperatures, currents, and spreads are written with two decimal places, except
+pack Vmin/Vmax which use three decimal places; spreads are whole millivolts.
+Per-battery
 columns precede the raw BMS and controller-arbitration columns. The trailing
 control columns record the controller-requested CVL/CCL/charge state and the
 final virtual-BMS effective CVL/CCL/DCL, permissions, thermal factor, command
