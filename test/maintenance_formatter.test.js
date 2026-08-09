@@ -118,6 +118,39 @@ assert.equal(live.system.mosfetTemperature.minimumId, 'Battery 2 · Sensor 02')
 assert.equal(live.system.bmsTemperature.average, '34.2')
 assert.equal(live.system.bmsTemperature.maximumId, 'Battery 2 · Sensor 01')
 assert.equal(live.system.bmsTemperature.single, null)
+
+const effectiveCells = (values) => values.map((voltage, index) => ({ index: index + 1, voltage }))
+const unbalancedCounts = format({
+  ...valid,
+  batteries: [
+    {
+      address: 2,
+      valid: true,
+      effectiveCells: effectiveCells([3.300, 3.330, 3.331, ...Array(13).fill(3.300)])
+    },
+    {
+      address: 3,
+      valid: true,
+      effectiveCells: effectiveCells([3.200, 3.230, 3.231, ...Array(13).fill(3.200)])
+    },
+    {
+      address: 4,
+      valid: false,
+      effectiveCells: effectiveCells(Array(16).fill(3.500))
+    },
+    {
+      address: 5,
+      valid: true,
+      effectiveCells: effectiveCells(Array(15).fill(3.500))
+    }
+  ]
+}, null, 100000)
+assert.equal(unbalancedCounts.aggregate.unbalancedCellCount, '4')
+assert.equal(unbalancedCounts.batteries[0].unbalancedCellCount, '2')
+assert.equal(unbalancedCounts.batteries[1].unbalancedCellCount, '2')
+assert.equal(unbalancedCounts.batteries[2].unbalancedCellCount, '—')
+assert.equal(unbalancedCounts.batteries[3].unbalancedCellCount, '—')
+
 const packedCellId = format({
   ...valid,
   system: { ...valid.system, maximumCellId61: 0x1102 }

@@ -114,6 +114,11 @@ const bmsSingleTemperature = bmsMaximumTemperature !== '—' && bmsMaximumTemper
 const batteries = (displaySnapshot.batteries || []).map((battery) => {
     const cells = battery.effectiveCells || battery.effective_cells || []
     const cellValues = cells.map((cell) => cell.voltage).filter((value) => typeof value === 'number' && Number.isFinite(value))
+    const completeCellArray = battery.valid === true && cellValues.length === 16
+    const batteryMinimumCellVoltage = completeCellArray ? Math.min(...cellValues) : null
+    const unbalancedCellCount = completeCellArray
+        ? cellValues.filter((value) => value - batteryMinimumCellVoltage >= 0.030 - Number.EPSILON).length
+        : null
     return {
         address: battery.address,
         valid: battery.valid === true,
@@ -126,6 +131,7 @@ const batteries = (displaySnapshot.batteries || []).map((battery) => {
         delta: number(battery.systemVoltageDeltaMv ?? battery.system_voltage_delta_mv, 1),
         cellSpread: cellValues.length ? number(Math.max(...cellValues) - Math.min(...cellValues)) : '—',
         cellExtremaSource: 'CID2 42 cell array',
+        unbalancedCellCount: unbalancedCellCount == null ? '—' : String(unbalancedCellCount),
         cells: cells.map((cell) => ({ index: cell.index, voltage: number(cell.voltage) })),
         temperatures: (battery.temperatures || []).map((value, index) => ({ index: index + 1, value: number(value, 1) })),
         minimumTemperature: number(battery.minimumTemperature ?? battery.minimum_temperature, 1),
@@ -138,6 +144,11 @@ const batteries = (displaySnapshot.batteries || []).map((battery) => {
         status44: status44View(battery.status44)
     }
 })
+
+const completeBatteries = batteries.filter((battery) => battery.unbalancedCellCount !== '—')
+const totalUnbalancedCellCount = completeBatteries.length
+    ? String(completeBatteries.reduce((sum, battery) => sum + Number(battery.unbalancedCellCount), 0))
+    : '—'
 
 const sourceBatteries = displaySnapshot.batteries || []
 const completeCapacity = sourceBatteries.length > 0 && sourceBatteries.every((battery) =>
@@ -258,6 +269,7 @@ msg.payload = {
         vmin: number(aggregate.vmin),
         vmax: number(aggregate.vmax),
         spread: number((aggregate.spread || 0) * 1000, 1),
+        unbalancedCellCount: totalUnbalancedCellCount,
         min: `${aggregate.minCellAddress ?? '—'} / cell ${aggregate.minCellIndex ?? '—'}`,
         max: `${aggregate.maxCellAddress ?? '—'} / cell ${aggregate.maxCellIndex ?? '—'}`,
         current: number(aggregate.summedBatteryCurrent, 1),
