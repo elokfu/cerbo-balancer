@@ -1,4 +1,5 @@
 import sys
+import csv
 import tempfile
 import time
 import unittest
@@ -8,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import dyness_rs485_service as service  # noqa: E402
-from dyness_rs485_service import JsonlStore, ReadOnlyPoller, effective_control  # noqa: E402
+from dyness_rs485_service import CsvLogger, JsonlStore, ReadOnlyPoller, effective_control  # noqa: E402
 from dyness_rs485_protocol import checksum, length_field  # noqa: E402
 
 
@@ -95,6 +96,126 @@ class DynessServiceTests(unittest.TestCase):
         self.assertEqual(snapshot["effectiveControl"]["effectiveChargeVoltage"], 53.0)
         self.assertEqual(poller.active_addresses, [2])
         self.assertEqual(snapshot["serialHealth"]["state"], "disconnected")
+
+    def test_effective_control_exposes_requested_and_arbitrated_values(self):
+        snapshot = {
+            "valid": True,
+            "limits": {
+                "chargeVoltage": 56.5,
+                "chargeCurrent": 56.0,
+                "dischargeCurrentSigned": -198.8,
+                "statusFlags": {
+                    "chargeEnabled": True,
+                    "dischargeEnabled": True,
+                },
+            },
+            "batteries": [
+                {"temperatures": [25.0, 26.0, 27.0, 26.0, 25.0]},
+            ],
+        }
+        command = {
+            "mode": "ACTIVE",
+            "timestamp": 999000,
+            "requestedVoltage": 57.0,
+            "requestedCurrent": 80.0,
+            "chargeEnabled": True,
+            "reason": "BALANCE_CURRENT_CONTROL",
+        }
+        with patch.object(service, "now_ms", return_value=1000000):
+            control = effective_control(snapshot, command)
+
+        self.assertEqual(control["requestedVoltage"], 57.0)
+        self.assertEqual(control["requestedCurrent"], 80.0)
+        self.assertEqual(control["commandReason"], "BALANCE_CURRENT_CONTROL")
+        self.assertEqual(control["commandAgeMs"], 1000)
+        self.assertEqual(control["effectiveChargeVoltage"], 56.5)
+        self.assertEqual(control["effectiveChargeCurrent"], 56.0)
+        self.assertTrue(control["effectiveChargeEnabled"])
+        self.assertTrue(control["allowToCharge"])
+        self.assertEqual(control["reason"], "BMS_OR_SAFETY_LIMIT")
+
+    def test_effective_control_marks_zero_ccl_and_controller_inhibit(self):
+        base = {
+            "valid": True,
+            "limits": {
+                "chargeVoltage": 56.5,
+                "chargeCurrent": 0.0,
+                "dischargeCurrentSigned": -198.8,
+                "statusFlags": {
+                    "chargeEnabled": True,
+                    "dischargeEnabled": True,
+                },
+            },
+            "batteries": [{"temperatures": [25.0]}],
+        }
+        command = {
+            "mode": "ACTIVE",
+            "timestamp": 999000,
+            "requestedVoltage": 55.2,
+            "requestedCurrent": 20.0,
+            "chargeEnabled": True,
+        }
+        with patch.object(service, "now_ms", return_value=1000000):
+            zero_ccl = effective_control(base, command)
+        self.assertEqual(zero_ccl["effectiveChargeCurrent"], 0.0)
+        self.assertFalse(zero_ccl["effectiveChargeEnabled"])
+        self.assertEqual(zero_ccl["reason"], "BMS_CCL_ZERO")
+
+        command["chargeEnabled"] = False
+        with patch.object(service, "now_ms", return_value=1000000):
+            inhibited = effective_control({**base, "limits": {**base["limits"], "chargeCurrent": 20.0}}, command)
+        self.assertEqual(inhibited["requestedCurrent"], 20.0)
+        self.assertEqual(inhibited["effectiveChargeCurrent"], 0.0)
+        self.assertFalse(inhibited["effectiveChargeEnabled"])
+        self.assertEqual(inhibited["reason"], "CONTROLLER_CHARGE_INHIBIT")
+
+    def test_csv_logs_requested_and_effective_virtual_bms_output(self):
+        snapshot = {
+            "timestamp": 1000000,
+            "valid": True,
+            "serialPort": "/dev/ttyUSB0",
+            "baud": 115200,
+            "system": {"voltage61": 53.25, "soc61": 98, "maximumBmsTemperature61": 31.5},
+            "limits": {
+                "chargeVoltage": 56.5,
+                "chargeCurrent": 56.0,
+                "dischargeCurrentSigned": -198.8,
+                "statusFlags": {"chargeEnabled": True, "dischargeEnabled": True},
+            },
+            "aggregate": {"vmin": 3.317, "vmax": 3.329, "spread": 0.012, "summedBatteryCurrent": 1.5},
+            "inventory": {"activeAddresses": [2]},
+            "batteries": [{
+                "address": 2,
+                "valid": True,
+                "voltage": 53.25,
+                "current": 1.5,
+                "effectiveCells": [{"index": index, "voltage": 3.32} for index in range(1, 17)],
+                "temperatures": [25.0, 26.0, 27.0, 26.0, 25.0],
+            }],
+        }
+        command = {
+            "mode": "ACTIVE",
+            "timestamp": 999000,
+            "requestedVoltage": 57.0,
+            "requestedCurrent": 80.0,
+            "chargeEnabled": True,
+            "reason": "BALANCE_CURRENT_CONTROL",
+        }
+        with patch.object(service, "now_ms", return_value=1000000):
+            snapshot["effectiveControl"] = effective_control(snapshot, command)
+        with tempfile.TemporaryDirectory() as root:
+            logger = CsvLogger(root)
+            result = logger.write(snapshot, {"enabled": True, "filename": "arbitration.csv"})
+            self.assertTrue(result["written"])
+            contents = (Path(root) / service.CSV_LOG_DIRECTORY / "arbitration.csv").read_text(encoding="utf-8")
+            self.assertIn("# virtual_bms_service=com.victronenergy.battery.rs485_dyness", contents)
+            self.assertIn("controller_requested_voltage_v", contents)
+            self.assertIn("virtual_bms_effective_ccl_a", contents)
+            rows = list(csv.DictReader(line for line in contents.splitlines() if not line.startswith("#")))
+            self.assertEqual(rows[0]["controller_requested_voltage_v"], "57.00")
+            self.assertEqual(rows[0]["virtual_bms_effective_cvl_v"], "56.50")
+            self.assertEqual(rows[0]["virtual_bms_effective_ccl_a"], "56.00")
+            self.assertEqual(rows[0]["virtual_bms_arbitration_reason"], "BMS_OR_SAFETY_LIMIT")
 
     def test_status44_is_polled_every_five_seconds_without_affecting_validity(self):
         poller = ReadOnlyPoller("C:\\fake-dyness-rs485", 115200, 0.01)

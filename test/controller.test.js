@@ -75,6 +75,21 @@ assert.equal(independentHistory.at(-1).globalVmax, 3.455)
 assert.equal(independentHistory.at(-1).globalVmin, 3.42)
 assert.ok(Math.abs(independentHistory.at(-1).globalSpread - 0.035) < 1e-12)
 
+const arbitration = createBalancerController({ now: () => clock })
+arbitration.handle({ type: 'telemetry', timestamp: clock, telemetry: telemetry({
+  effectiveControl: {
+    requestedVoltage: 57.0,
+    requestedCurrent: 80.0,
+    effectiveChargeVoltage: 56.5,
+    effectiveChargeCurrent: 20.0,
+    reason: 'BMS_OR_SAFETY_LIMIT',
+    commandFresh: true
+  }
+}) })
+assert.equal(arbitration.getStatus().virtualBms.requestedVoltage, 57.0)
+assert.equal(arbitration.getStatus().virtualBms.effectiveChargeCurrent, 20.0)
+assert.equal(arbitration.getStatus().virtualBms.reason, 'BMS_OR_SAFETY_LIMIT')
+
 const testMode = createBalancerController({ now: () => clock })
 testMode.handle({ type: 'telemetry', timestamp: clock, telemetry: telemetry() })
 testMode.handle({ type: 'set_output_ready', value: true, timestamp: clock })

@@ -144,6 +144,17 @@ class CsvLogger:
         "timestamp", "sample_number", "system_voltage_v", "soc_percent", "bms_temperature_c",
         "vmin_v", "vmax_v", "spread_mv", "battery_current_a", "ccl_a",
         "dcl_a", "charge_enabled", "discharge_enabled",
+        "controller_requested_voltage_v", "controller_requested_current_a",
+        "controller_charge_enabled", "controller_command_reason",
+        "controller_command_fresh", "controller_command_age_s",
+        "virtual_bms_effective_cvl_v", "virtual_bms_effective_ccl_a",
+        "virtual_bms_effective_dcl_a", "virtual_bms_charge_enabled",
+        "virtual_bms_discharge_enabled", "virtual_bms_allow_to_charge",
+        "virtual_bms_allow_to_discharge", "virtual_bms_thermal_factor",
+        "virtual_bms_charge_blocked_by_status",
+        "virtual_bms_discharge_blocked_by_status",
+        "virtual_bms_charge_blocked_by_controller",
+        "virtual_bms_output_valid", "virtual_bms_arbitration_reason",
     ]
     battery_fields = [
         "present", "valid", "voltage_v", "current_a", "status1", "status2",
@@ -286,11 +297,51 @@ class CsvLogger:
                 header = next((line.rstrip("\n") for line in stream if not line.startswith("#")), "")
             if header != ",".join(columns):
                 return {"written": False}
-        system, limits, aggregate = snapshot.get("system") or {}, snapshot.get("limits") or {}, snapshot.get("aggregate") or {}
+        system = snapshot.get("system") or {}
+        limits = snapshot.get("limits") or {}
+        aggregate = snapshot.get("aggregate") or {}
+        control_output = snapshot.get("effectiveControl") or {}
+        status_flags = limits.get("statusFlags") or {}
+        command_age_s = control_output.get("commandAgeMs")
+        if isinstance(command_age_s, (int, float)):
+            command_age_s = float(command_age_s) / 1000.0
         row = {column: "" for column in columns}
         timestamp = snapshot.get("timestamp")
         readable_timestamp = self._format_timestamp(timestamp)
-        row.update({"timestamp": readable_timestamp, "sample_number": self.next_sample_number, "system_voltage_v": self._format_voltage(system.get("voltage61")), "soc_percent": self._format_number(system.get("soc61")), "bms_temperature_c": self._format_number(system.get("maximumBmsTemperature61")), "vmin_v": self._format_voltage(aggregate.get("vmin")), "vmax_v": self._format_voltage(aggregate.get("vmax")), "spread_mv": self._format_spread_mv(aggregate.get("spread")), "battery_current_a": self._format_number(aggregate.get("summedBatteryCurrent")), "ccl_a": self._format_number(limits.get("chargeCurrent")), "dcl_a": self._format_number(limits.get("dischargeCurrentSigned")), "charge_enabled": (limits.get("statusFlags") or {}).get("chargeEnabled"), "discharge_enabled": (limits.get("statusFlags") or {}).get("dischargeEnabled")})
+        row.update({
+            "timestamp": readable_timestamp,
+            "sample_number": self.next_sample_number,
+            "system_voltage_v": self._format_voltage(system.get("voltage61")),
+            "soc_percent": self._format_number(system.get("soc61")),
+            "bms_temperature_c": self._format_number(system.get("maximumBmsTemperature61")),
+            "vmin_v": self._format_voltage(aggregate.get("vmin")),
+            "vmax_v": self._format_voltage(aggregate.get("vmax")),
+            "spread_mv": self._format_spread_mv(aggregate.get("spread")),
+            "battery_current_a": self._format_number(aggregate.get("summedBatteryCurrent")),
+            "ccl_a": self._format_number(limits.get("chargeCurrent")),
+            "dcl_a": self._format_number(limits.get("dischargeCurrentSigned")),
+            "charge_enabled": status_flags.get("chargeEnabled"),
+            "discharge_enabled": status_flags.get("dischargeEnabled"),
+            "controller_requested_voltage_v": self._format_voltage(control_output.get("requestedVoltage")),
+            "controller_requested_current_a": self._format_number(control_output.get("requestedCurrent")),
+            "controller_charge_enabled": control_output.get("controllerChargeEnabled"),
+            "controller_command_reason": control_output.get("commandReason"),
+            "controller_command_fresh": control_output.get("commandFresh"),
+            "controller_command_age_s": self._format_number(command_age_s),
+            "virtual_bms_effective_cvl_v": self._format_voltage(control_output.get("effectiveChargeVoltage")),
+            "virtual_bms_effective_ccl_a": self._format_number(control_output.get("effectiveChargeCurrent")),
+            "virtual_bms_effective_dcl_a": self._format_number(control_output.get("effectiveDischargeCurrent")),
+            "virtual_bms_charge_enabled": control_output.get("effectiveChargeEnabled"),
+            "virtual_bms_discharge_enabled": control_output.get("effectiveDischargeEnabled"),
+            "virtual_bms_allow_to_charge": control_output.get("allowToCharge"),
+            "virtual_bms_allow_to_discharge": control_output.get("allowToDischarge"),
+            "virtual_bms_thermal_factor": self._format_number(control_output.get("thermalFactor"), 3),
+            "virtual_bms_charge_blocked_by_status": control_output.get("chargeBlockedByStatus"),
+            "virtual_bms_discharge_blocked_by_status": control_output.get("dischargeBlockedByStatus"),
+            "virtual_bms_charge_blocked_by_controller": control_output.get("chargeBlockedByController"),
+            "virtual_bms_output_valid": control_output.get("outputValid"),
+            "virtual_bms_arbitration_reason": control_output.get("reason"),
+        })
         for battery in snapshot.get("batteries") or []:
             address = int(battery.get("address"))
             if address not in self.initial_addresses:
@@ -302,7 +353,7 @@ class CsvLogger:
             for index, value in enumerate(battery.get("temperatures") or [], 1): row[prefix + f"temp_{index:02d}_c"] = value
         with target.open("a", newline="", encoding="utf-8") as stream:
             if not exists:
-                stream.write(f"# schema_version=7\n# serial_port={snapshot.get('serialPort')}\n# baud={snapshot.get('baud')}\n# poll_interval_seconds=6\n# timestamp_format=HH:MM:SS {self.timezone_name}\n# initial_addresses={','.join(str(address) for address in self.initial_addresses)}\n")
+                stream.write(f"# schema_version=8\n# serial_port={snapshot.get('serialPort')}\n# baud={snapshot.get('baud')}\n# poll_interval_seconds=6\n# timestamp_format=HH:MM:SS {self.timezone_name}\n# virtual_bms_service=com.victronenergy.battery.rs485_dyness\n# virtual_bms_device_instance=100\n# dvcc_output_mode=TEST/shadow\n# initial_addresses={','.join(str(address) for address in self.initial_addresses)}\n")
                 csv.DictWriter(stream, fieldnames=columns).writeheader()
             csv.DictWriter(stream, fieldnames=columns).writerow(row)
         self.next_sample_number += 1
@@ -334,26 +385,62 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
         bms_ccl = 0.0
     if discharge_blocked:
         bms_dcl = 0.0
-    active_command = command if command and command.get("mode") == "ACTIVE" else None
-    command_age = now_ms() - active_command["timestamp"] if active_command and isinstance(active_command.get("timestamp"), (int, float)) else None
+    command_age = now_ms() - command["timestamp"] if command and isinstance(command.get("timestamp"), (int, float)) else None
     fresh_command = bool(command_age is not None and 0 <= command_age <= 5000)
-    requested_voltage = float(active_command.get("requestedVoltage", 55.2)) if fresh_command else 55.2
-    requested_current = float(active_command.get("requestedCurrent", 100.0)) if fresh_command else 100.0
-    controller_charge_enabled = bool(active_command.get("chargeEnabled", True)) if fresh_command else True
-    if not controller_charge_enabled:
-        requested_current = 0.0
+    requested_voltage = float(command.get("requestedVoltage", 55.2)) if fresh_command else 55.2
+    requested_current = float(command.get("requestedCurrent", 100.0)) if fresh_command else 100.0
+    controller_charge_enabled = bool(command.get("chargeEnabled", True)) if fresh_command else True
+    charge_request_current = requested_current if controller_charge_enabled else 0.0
+    active_command = command if command and command.get("mode") == "ACTIVE" else None
+    active_command_fresh = bool(active_command and fresh_command)
+    effective_voltage = min(requested_voltage, bms_cvl, 53.0 if charge_blocked else 56.5) if valid else 53.0
+    effective_current = min(charge_request_current, bms_ccl, 100.0) * factor if valid else 0.0
+    effective_charge_enabled = bool(valid and status_flags.get("chargeEnabled") is True and controller_charge_enabled and effective_current > 0)
+    effective_discharge_enabled = bool(valid and status_flags.get("dischargeEnabled") is True and bms_dcl > 0)
+    if not valid:
+        reason = "RS485_TELEMETRY_INVALID"
+    elif not fresh_command:
+        reason = "COMMAND_STALE_OR_UNAVAILABLE"
+    elif not active_command_fresh:
+        reason = "TEST_MODE_SHADOW_OUTPUT"
+    elif charge_blocked:
+        reason = "BMS_CHARGE_PERMISSION_DISABLED"
+    elif not controller_charge_enabled:
+        reason = "CONTROLLER_CHARGE_INHIBIT"
+    elif bms_ccl <= 0:
+        reason = "BMS_CCL_ZERO"
+    elif factor < 1.0:
+        reason = "THERMAL_DERATING"
+    elif effective_current < charge_request_current or effective_voltage < requested_voltage:
+        reason = "BMS_OR_SAFETY_LIMIT"
+    else:
+        reason = "BMS_LIMITS_ACCEPTED"
     return {
-        "mode": "ACTIVE" if fresh_command and valid else "TEST",
+        "mode": "ACTIVE" if active_command_fresh and valid else "TEST",
         "commandFresh": fresh_command,
-        "effectiveChargeVoltage": min(requested_voltage, bms_cvl, 53.0 if charge_blocked else 56.5) if valid else 53.0,
-        "effectiveChargeCurrent": min(requested_current, bms_ccl, 100.0) * factor if valid else 0.0,
+        "commandAgeMs": command_age,
+        "commandMode": command.get("mode") if isinstance(command, dict) else None,
+        "commandReason": command.get("reason") if isinstance(command, dict) else None,
+        "requestedVoltage": requested_voltage if fresh_command else None,
+        "requestedCurrent": requested_current if fresh_command else None,
+        "controllerChargeEnabled": controller_charge_enabled if fresh_command else None,
+        "bmsChargeVoltage": bms_cvl if valid else None,
+        "bmsChargeCurrent": bms_ccl if valid else None,
+        "bmsDischargeCurrent": bms_dcl if valid else None,
+        "effectiveChargeVoltage": effective_voltage,
+        "effectiveChargeCurrent": effective_current,
         "effectiveDischargeCurrent": bms_dcl,
+        "effectiveChargeEnabled": effective_charge_enabled,
+        "effectiveDischargeEnabled": effective_discharge_enabled,
+        "allowToCharge": effective_charge_enabled,
+        "allowToDischarge": effective_discharge_enabled,
         "thermalFactor": factor,
         "statusFlags": status_flags,
         "chargeBlockedByStatus": charge_blocked,
         "chargeBlockedByController": not controller_charge_enabled,
         "dischargeBlockedByStatus": discharge_blocked,
-        "reason": None if valid else "RS485 telemetry invalid or stale",
+        "outputValid": valid,
+        "reason": reason,
     }
 
 
