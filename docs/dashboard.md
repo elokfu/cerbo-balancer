@@ -74,10 +74,10 @@ timeout. Applying values validates them before saving the controller state to
 They use append-only JSON snapshots; startup restores the final valid snapshot.
 
 Mode starts at `TEST`. TEST calculates current-control and recovery commands
-but performs no charger or voltage write. ACTIVE remains rejected unless fresh
-complete telemetry, valid configuration, and verified output readback are
-present; physical activation additionally requires the documented DVCC
-commissioning approval.
+but performs no charger or voltage write and does not require output readback.
+ACTIVE remains rejected unless fresh complete telemetry, valid configuration,
+and verified output readback are present; physical activation additionally
+requires the documented DVCC commissioning approval.
 
 Mode starts at `TEST`. The ACTIVE control is intentionally rejected unless
 cell telemetry and output readback are verified. TEST commands are diagnostic

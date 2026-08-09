@@ -197,7 +197,7 @@ function createBalancerController (options = {}) {
         state.fault = info.lockout; resetPi(); transition(STATES.FAULT_OR_ABORT, timestamp, info.lockout)
       }
       command = disabledCommand('TELEMETRY_LOCKOUT', config.protectionRecoveryVoltage)
-    } else if (state.state === STATES.FAULT_OR_ABORT && state.mode === MODES.TEST && state.fault === 'complete fresh telemetry from every expected battery is required') {
+    } else if (state.state === STATES.FAULT_OR_ABORT && state.mode === MODES.TEST && ['complete fresh telemetry from every expected battery is required', 'output readback is not verified'].includes(state.fault)) {
       state.fault = null; resetPi(); releaseSelection(); transition(STATES.NORMAL, timestamp, 'TEST telemetry recovered')
       command = safeNormalCommand('TEST_TELEMETRY_RECOVERED')
     } else if (state.state === STATES.FAULT_OR_ABORT) {
@@ -230,7 +230,7 @@ function createBalancerController (options = {}) {
       } else if (!selectedTelemetryHealthy(battery)) {
         state.fault = 'selected battery is invalid, protected, unavailable, or no longer charge-capable'; resetPi(); transition(STATES.FAULT_OR_ABORT, timestamp, state.fault); command = disabledCommand('SELECTED_BATTERY_FAULT', config.protectionRecoveryVoltage)
       } else if (state.state === STATES.BALANCE_ELIGIBILITY) {
-        if (!outputReady) { state.fault = 'output readback is not verified'; transition(STATES.FAULT_OR_ABORT, timestamp, state.fault); command = disabledCommand('OUTPUT_NOT_READY', config.protectionRecoveryVoltage) } else { transition(STATES.BALANCE_RESTART, timestamp, 'eligibility validated'); command = { requestedVoltage: config.balancingVoltageCeiling, requestedCurrent: config.aggregateCurrentMinimum, chargeEnabled: true, reason: 'BALANCE_RESTART' } }
+        if (state.mode === MODES.ACTIVE && !outputReady) { state.fault = 'output readback is not verified'; transition(STATES.FAULT_OR_ABORT, timestamp, state.fault); command = disabledCommand('OUTPUT_NOT_READY', config.protectionRecoveryVoltage) } else { transition(STATES.BALANCE_RESTART, timestamp, 'eligibility validated'); command = { requestedVoltage: config.balancingVoltageCeiling, requestedCurrent: config.aggregateCurrentMinimum, chargeEnabled: true, reason: 'BALANCE_RESTART' } }
       } else if (state.state === STATES.BALANCE_RESTART || state.state === STATES.BALANCE_CURRENT_CONTROL || state.state === STATES.BALANCE_CONFIRM) {
         if (!chargePermitted()) { startRecovery(timestamp, 'CHARGE_PERMISSION_LOST'); command = disabledCommand('CHARGE_PERMISSION_LOST') } else if (ccl() === 0) { startRecovery(timestamp, 'CCL_ZERO_STOP'); command = disabledCommand('CCL_ZERO_STOP') } else if (selectedVmax(battery) >= config.selectedVmaxStop) { startRecovery(timestamp, 'VMAX_NORMAL_STOP'); command = disabledCommand('VMAX_NORMAL_STOP') } else if ((battery.status44 && battery.status44.status2 && battery.status44.status2.chargeMosfet === false) || battery.chargeMosfet === false) { startRecovery(timestamp, 'CHARGER_MOSFET_OFF'); command = disabledCommand('CHARGER_MOSFET_OFF') } else {
           command = activeCurrentCommand(timestamp, battery)

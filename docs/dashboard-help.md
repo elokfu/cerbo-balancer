@@ -9,6 +9,9 @@ validated cell telemetry, valid configuration, and verified output readback.
 Physical activation additionally requires the separate DVCC commissioning
 approval.
 
+TEST mode is shadow-only: it calculates and logs controller commands without
+requiring output readback and without writing charger or voltage settings.
+
 The controller is enabled only when explicitly selected. `AUTO` evaluates
 automatic balancing entry and completion; `MANUAL` uses Start/Stop. New
 automatic sequences require SOC above 98%; a selected sequence continues above

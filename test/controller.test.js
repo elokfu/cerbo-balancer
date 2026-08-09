@@ -28,7 +28,14 @@ assert.equal(validateConfig({ socEntryThreshold: 97, socExitThreshold: 98 }).val
 controller.handle({ type: 'telemetry', telemetry: telemetry(), timestamp: clock })
 controller.handle({ type: 'set_enabled', value: true, timestamp: clock })
 controller.handle({ type: 'tick', timestamp: clock })
-assert.equal(controller.getState().state, STATES.FAULT_OR_ABORT) // output readback is deliberately required
+assert.equal(controller.getState().state, STATES.BALANCE_RESTART) // TEST mode is shadow-only and does not need output readback
+assert.equal(command(controller.handle({ type: 'tick', timestamp: clock })).mode, MODES.TEST)
+
+const activeWithoutReadback = createBalancerController({ now: () => clock })
+activeWithoutReadback.handle({ type: 'telemetry', telemetry: telemetry(), timestamp: clock })
+activeWithoutReadback.handle({ type: 'set_enabled', value: true, timestamp: clock })
+activeWithoutReadback.handle({ type: 'set_mode', value: MODES.ACTIVE, timestamp: clock })
+assert.equal(activeWithoutReadback.getStatus().mode, MODES.TEST)
 
 const startup = createBalancerController({ now: () => clock })
 startup.handle({ type: 'set_enabled', value: true, timestamp: clock })
@@ -37,6 +44,12 @@ startup.handle({ type: 'load', state: { state: STATES.FAULT_OR_ABORT, mode: MODE
 startup.handle({ type: 'telemetry', telemetry: telemetry(), timestamp: clock })
 assert.equal(startup.getState().state, STATES.NORMAL)
 assert.equal(startup.getState().fault, null)
+
+const outputRecovery = createBalancerController({ now: () => clock })
+outputRecovery.handle({ type: 'load', state: { state: STATES.FAULT_OR_ABORT, mode: MODES.TEST, enabled: true, fault: 'output readback is not verified' }, timestamp: clock })
+outputRecovery.handle({ type: 'telemetry', telemetry: telemetry(), timestamp: clock })
+assert.equal(outputRecovery.getState().state, STATES.NORMAL)
+assert.equal(outputRecovery.getState().fault, null)
 
 const active = createBalancerController({ now: () => clock })
 active.handle({ type: 'telemetry', telemetry: telemetry(), timestamp: clock })
