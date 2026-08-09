@@ -912,7 +912,7 @@
     "width": 12,
     "height": 10,
     "head": "",
-    "format": "<template><div><p>CSV sessions stored on the Cerbo. Select a file to download.</p><table><thead><tr><th>Filename</th><th>Modified</th><th>Size</th><th></th></tr></thead><tbody><tr v-for=\"f in (msg?.payload || [])\" :key=\"f.name\"><td>{{f.name}}</td><td>{{f.modified}}</td><td>{{f.size}} bytes</td><td><a :href=\"f.href\">Download</a></td></tr></tbody></table><p v-if=\"!(msg?.payload || []).length\">No CSV files yet.</p></div></template><style>table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid #ddd}</style>",
+    "format": "<template><div><p>CSV sessions stored on the Cerbo. Select a file to download.</p><table><thead><tr><th>Filename</th><th>Modified</th><th>Size</th><th></th></tr></thead><tbody><tr v-for=\"f in (msg?.payload || [])\" :key=\"f.name\"><td>{{f.name}}</td><td>{{f.modified}}</td><td>{{f.size}} bytes</td><td><a :href=\"f.href\" target=\"_blank\" rel=\"noopener\" download>Download</a></td></tr></tbody></table><p v-if=\"!(msg?.payload || []).length\">No CSV files yet.</p></div></template><style>table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid #ddd}</style>",
     "storeOutMessages": true,
     "passthru": false,
     "resendOnRefresh": true,
