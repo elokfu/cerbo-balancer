@@ -20,6 +20,24 @@ def response(address, cid2, info):
     return f"~{body}{checksum(body)}\r".encode("ascii")
 
 
+def system_summary_info(
+    voltage_mv=54480,
+    soc=100,
+    maximum_cell_mv=3524,
+    maximum_cell_id=0x0702,
+    minimum_cell_mv=3342,
+    minimum_cell_id=0x0B02,
+):
+    data = bytearray(49)
+    data[0:2] = voltage_mv.to_bytes(2, "big")
+    data[4] = soc
+    data[11:13] = maximum_cell_mv.to_bytes(2, "big")
+    data[13:15] = maximum_cell_id.to_bytes(2, "big")
+    data[15:17] = minimum_cell_mv.to_bytes(2, "big")
+    data[17:19] = minimum_cell_id.to_bytes(2, "big")
+    return data.hex().upper()
+
+
 class DynessServiceTests(unittest.TestCase):
     def test_serial_session_is_reused_until_disconnect(self):
         class FakeSerialPort:
@@ -224,15 +242,13 @@ class DynessServiceTests(unittest.TestCase):
         poller.active_addresses = [2]
         poller.next_discovery_at = time.monotonic() + 60
 
-        system_data = bytearray(49)
-        system_data[0:2] = (54480).to_bytes(2, "big")
-        system_data[4] = 100
+        system_data = system_summary_info()
         limits_info = f"{56500:04X}{48000:04X}{560:04X}{0xF83C:04X}C0"
         cells = "".join(f"{3500:04X}" for _ in range(16))
         pack_info = f"000210{cells}00{0:04X}{56000:04X}"
         status_info = "00020000000000F70FE98140"
         frames = {
-            0x61: response(2, 0x61, system_data.hex().upper()),
+            0x61: response(2, 0x61, system_data),
             0x63: response(2, 0x63, limits_info),
             0x42: response(2, 0x42, pack_info),
             0x44: response(2, 0x44, status_info),
@@ -262,21 +278,93 @@ class DynessServiceTests(unittest.TestCase):
         self.assertTrue(third["valid"])
         self.assertIn(0x44, calls)
 
+    def test_aggregate_cell_extrema_use_only_cid2_61(self):
+        poller = ReadOnlyPoller("C:\\fake-dyness-rs485", 115200, 0.01)
+        poller.active_addresses = [2]
+        poller.next_discovery_at = time.monotonic() + 60
+        poller.next_status_at = time.monotonic() + 60
+
+        cells = "".join(f"{3300:04X}" for _ in range(16))
+        frames = {
+            0x61: response(2, 0x61, system_summary_info(
+                voltage_mv=52800,
+                maximum_cell_mv=3329,
+                maximum_cell_id=0x0702,
+                minimum_cell_mv=3317,
+                minimum_cell_id=0x0B02,
+            )),
+            0x63: response(2, 0x63, f"{56500:04X}{48000:04X}{560:04X}{0xF83C:04X}C0"),
+            0x42: response(2, 0x42, f"000210{cells}00{0:04X}{52800:04X}"),
+        }
+        poller._open_serial = lambda: object()
+        poller._owner_conflict = lambda: False
+        poller.query = lambda _port, _address, cid2, timeout=None: frames[cid2]
+
+        snapshot = poller.poll()
+
+        self.assertTrue(snapshot["valid"])
+        self.assertEqual(snapshot["aggregate"], {
+            "source": "CID2_61_SYSTEM_SUMMARY",
+            "valid": True,
+            "vmin": 3.317,
+            "vmax": 3.329,
+            "spread": 0.012,
+            "minCellAddress": 2,
+            "minCellIndex": 11,
+            "maxCellAddress": 2,
+            "maxCellIndex": 7,
+            "summedBatteryCurrent": 0.0,
+            "minimumTemperature": None,
+            "maximumTemperature": None,
+            "averageTemperature": None,
+        })
+
+    def test_missing_cid2_61_extrema_blocks_aggregate_without_cell_fallback(self):
+        poller = ReadOnlyPoller("C:\\fake-dyness-rs485", 115200, 0.01)
+        poller.active_addresses = [2]
+        poller.next_discovery_at = time.monotonic() + 60
+        poller.next_status_at = time.monotonic() + 60
+
+        cells = "".join(f"{3300:04X}" for _ in range(16))
+        frames = {
+            0x61: response(2, 0x61, system_summary_info(
+                voltage_mv=52800,
+                maximum_cell_mv=0,
+                maximum_cell_id=0,
+                minimum_cell_mv=0,
+                minimum_cell_id=0,
+            )),
+            0x63: response(2, 0x63, f"{56500:04X}{48000:04X}{560:04X}{0xF83C:04X}C0"),
+            0x42: response(2, 0x42, f"000210{cells}00{0:04X}{52800:04X}"),
+        }
+        poller._open_serial = lambda: object()
+        poller._owner_conflict = lambda: False
+        poller.query = lambda _port, _address, cid2, timeout=None: frames[cid2]
+
+        snapshot = poller.poll()
+
+        self.assertFalse(snapshot["valid"])
+        self.assertFalse(snapshot["cellTelemetryValid"])
+        self.assertIn("CID2=61 cell extrema unavailable or invalid", snapshot["reason"])
+        self.assertEqual(snapshot["aggregate"]["source"], "CID2_61_SYSTEM_SUMMARY")
+        self.assertFalse(snapshot["aggregate"]["valid"])
+        self.assertIsNone(snapshot["aggregate"]["vmin"])
+        self.assertIsNone(snapshot["aggregate"]["vmax"])
+        self.assertIsNone(snapshot["aggregate"]["spread"])
+
     def test_incremental_discovery_does_not_block_active_telemetry(self):
         poller = ReadOnlyPoller("C:\\fake-dyness-rs485", 115200, 0.01)
         poller.active_addresses = [2]
         poller.next_discovery_at = time.monotonic()
 
-        system_data = bytearray(49)
-        system_data[0:2] = (54480).to_bytes(2, "big")
-        system_data[4] = 100
+        system_data = system_summary_info()
         limits_info = f"{56500:04X}{48000:04X}{560:04X}{0xF83C:04X}C0"
         cells = "".join(f"{3500:04X}" for _ in range(16))
         pack_info = f"000210{cells}00{0:04X}{56000:04X}"
         pack_info_3 = f"000310{cells}00{0:04X}{56000:04X}"
         status_info = "00020000000000F70FE98140"
         frames = {
-            0x61: response(2, 0x61, system_data.hex().upper()),
+            0x61: response(2, 0x61, system_data),
             0x63: response(2, 0x63, limits_info),
             0x42: response(2, 0x42, pack_info),
             0x44: response(2, 0x44, status_info),

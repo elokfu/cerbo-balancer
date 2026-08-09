@@ -18,7 +18,10 @@ automatic sequences require SOC above 98%; a selected sequence continues above
 97% and exits at or below 97%. Safety handling and stale-input protection apply
 in every mode.
 
-The displayed spread is Vmax minus Vmin. Cell indexes are only shown as
-validated values. Raw CAN frames and decoder health are retained for
-diagnostics. A CCL of zero is not treated as a disconnected battery, but it
-does stop an active balancing charge interval and enters discharge recovery.
+Pack-wide Vmin, Vmax, spread, and their battery/cell locations are from the
+CID2 `0x61` system summary. Per-battery Vmin, Vmax, and spread are calculated
+from that battery's validated CID2 `0x42` cell array. If CID2 `0x61` extrema
+are unavailable or unphysical, pack-wide extrema are shown as unavailable and
+elevated balancing is blocked; the controller never substitutes locally
+calculated values. A CCL of zero is not treated as a disconnected battery, but
+it does stop an active balancing charge interval and enters discharge recovery.

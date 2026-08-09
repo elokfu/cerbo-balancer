@@ -22,6 +22,15 @@ Status5 identify cell voltage-check faults for cells 1–8 and 9–16. These
 values are diagnostic-only and do not alter telemetry validity, DVCC limits,
 or controller behavior.
 
+CID2 `0x42` remains the only source for each battery's logical cell vector.
+When it reports 15 cells, cell 16 is reconstructed only as the addressed
+battery's CID2 `0x42` voltage minus the first 15 CID2 `0x42` cells. CID2
+`0x61` is the authoritative source for pack-wide Vmin, Vmax, spread, and their
+packed battery/cell locations (`0x1102` means Battery 2, Cell 11). CID2
+`0x44` is status-only and is never used as a cell-voltage source. An invalid
+CID2 `0x61` extrema summary is not replaced with a locally calculated pack
+aggregate, and blocks elevated balancing.
+
 The CID2 `0x63` status byte is decoded and retained as `limits.statusFlags`.
 The correct Pylon/Dyness meanings are: bit 7 charge enabled, bit 6 discharge
 enabled, bit 5 strong charge, and bit 4 full charge. Bits 0–3 are retained as

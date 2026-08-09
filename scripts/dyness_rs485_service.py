@@ -118,6 +118,60 @@ def active_bms_selection(values: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def decode_system_cell_location(value: Any) -> tuple[int | None, int | None]:
+    """Decode Dyness CID2 61's packed ``0xCCBB`` cell/battery location."""
+    if not isinstance(value, int) or not 0 <= value <= 0xFFFF:
+        return None, None
+    cell_index = (value >> 8) & 0xFF
+    battery_address = value & 0xFF
+    if not 1 <= cell_index <= 16 or not 1 <= battery_address <= 0xFF:
+        return None, None
+    return battery_address, cell_index
+
+
+def system_cell_extrema(system: dict[str, Any]) -> dict[str, Any]:
+    """Return the authoritative pack extrema reported by CID2 61.
+
+    CID2 42 remains the source for each battery's cell vector.  This helper
+    deliberately does not inspect that vector: aggregate extrema must come
+    from the BMS system summary or remain unavailable.
+    """
+    minimum = system.get("minimumCellVoltage61")
+    maximum = system.get("maximumCellVoltage61")
+    min_address, min_index = decode_system_cell_location(system.get("minimumCellId61"))
+    max_address, max_index = decode_system_cell_location(system.get("maximumCellId61"))
+    valid = (
+        isinstance(minimum, (int, float)) and 2.0 <= minimum <= 4.5
+        and isinstance(maximum, (int, float)) and 2.0 <= maximum <= 4.5
+        and maximum >= minimum
+        and min_address is not None and min_index is not None
+        and max_address is not None and max_index is not None
+    )
+    if not valid:
+        return {
+            "source": "CID2_61_SYSTEM_SUMMARY",
+            "valid": False,
+            "vmin": None,
+            "vmax": None,
+            "spread": None,
+            "minCellAddress": None,
+            "minCellIndex": None,
+            "maxCellAddress": None,
+            "maxCellIndex": None,
+        }
+    return {
+        "source": "CID2_61_SYSTEM_SUMMARY",
+        "valid": True,
+        "vmin": float(minimum),
+        "vmax": float(maximum),
+        "spread": round(float(maximum) - float(minimum), 6),
+        "minCellAddress": min_address,
+        "minCellIndex": min_index,
+        "maxCellAddress": max_address,
+        "maxCellIndex": max_index,
+    }
+
+
 def virtual_bms_state(control: dict[str, Any], selection: dict[str, Any]) -> str:
     """Create the concise human-readable state shown by GX/VRM."""
     cvl = control.get("effectiveChargeVoltage")
@@ -159,7 +213,8 @@ def unavailable_snapshot(
         "reason": reason, "system": {"voltage61": None, "soc61": None},
         "limits": None, "discovery": {"scannedAddresses": list(EXPECTED_ADDRESSES),
         "respondingAddresses": [], "respondingCount": 0}, "batteries": [],
-        "aggregate": {"summedBatteryCurrent": None, "vmin": None, "vmax": None,
+        "aggregate": {"source": "CID2_61_SYSTEM_SUMMARY", "valid": False,
+        "summedBatteryCurrent": None, "vmin": None, "vmax": None,
         "spread": None, "minCellAddress": None, "minCellIndex": None,
         "maxCellAddress": None, "maxCellIndex": None, "minimumTemperature": None,
         "maximumTemperature": None, "averageTemperature": None},
@@ -1061,14 +1116,15 @@ class ReadOnlyPoller:
             expected_addresses = expected_addresses_before_discovery
             responding_addresses = {item["address"] for item in batteries}
             complete_battery_set = bool(expected_addresses) and not self.pending_removal and responding_addresses == expected_addresses
-            cells = [(item["address"], cell) for item in valid_batteries for cell in item["effectiveCells"]]
-            vmax_entry = max(cells, key=lambda entry: entry[1]["voltage"], default=(None, {"index": None, "voltage": None}))
-            vmin_entry = min(cells, key=lambda entry: entry[1]["voltage"], default=(None, {"index": None, "voltage": None}))
             currents = [item["current"] for item in valid_batteries]
             temps = [temperature for item in valid_batteries for temperature in item["temperatures"]]
             all_expected_valid = complete_battery_set and len(valid_batteries) == len(batteries)
+            extrema = system_cell_extrema(system_values)
+            if not extrema["valid"]:
+                errors.append("CID2=61 cell extrema unavailable or invalid")
             snapshot = {
-                "timestamp": now_ms(), "telemetryAge": 0, "valid": bool(system_voltage is not None and limits and all_expected_valid),
+                "timestamp": now_ms(), "telemetryAge": 0,
+                "valid": bool(system_voltage is not None and limits and all_expected_valid and extrema["valid"]),
                 "source": "rs485-dyness", "serialPort": self.port_name, "baud": self.baud,
                 "reason": "; ".join(errors) if errors else None,
                 "system": system_values, "limits": limits,
@@ -1082,14 +1138,11 @@ class ReadOnlyPoller:
                     "errors": status_errors,
                     "pollIntervalSeconds": STATUS44_INTERVAL,
                 },
-                "aggregate": {"summedBatteryCurrent": sum(currents) if all_expected_valid else None,
-                "vmin": vmin_entry[1]["voltage"], "vmax": vmax_entry[1]["voltage"],
-                "spread": (vmax_entry[1]["voltage"] - vmin_entry[1]["voltage"] if cells else None),
-                "minCellAddress": vmin_entry[0], "minCellIndex": vmin_entry[1]["index"],
-                "maxCellAddress": vmax_entry[0], "maxCellIndex": vmax_entry[1]["index"],
+                "aggregate": {**extrema,
+                "summedBatteryCurrent": sum(currents) if all_expected_valid else None,
                 "minimumTemperature": min(temps) if temps else None, "maximumTemperature": max(temps) if temps else None,
                 "averageTemperature": sum(temps) / len(temps) if temps else None},
-                "cellTelemetryValid": bool(all_expected_valid and cells),
+                "cellTelemetryValid": bool(all_expected_valid and extrema["valid"]),
                 "decoderHealth": "healthy" if not errors else "degraded", "rawFrames": raw_frames,
             }
             self.serial_health.update({

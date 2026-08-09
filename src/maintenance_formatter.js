@@ -125,6 +125,7 @@ const batteries = (displaySnapshot.batteries || []).map((battery) => {
         capacitySoc: bounded(battery.capacitySoc ?? battery.capacity_soc, 0, 100, 1),
         delta: number(battery.systemVoltageDeltaMv ?? battery.system_voltage_delta_mv, 1),
         cellSpread: cellValues.length ? number(Math.max(...cellValues) - Math.min(...cellValues)) : '—',
+        cellExtremaSource: 'CID2 42 cell array',
         cells: cells.map((cell) => ({ index: cell.index, voltage: number(cell.voltage) })),
         temperatures: (battery.temperatures || []).map((value, index) => ({ index: index + 1, value: number(value, 1) })),
         minimumTemperature: number(battery.minimumTemperature ?? battery.minimum_temperature, 1),
@@ -199,9 +200,7 @@ msg.payload = {
             minimumVoltage: systemMinimumCellVoltage,
             minimumId: cellLocation(system.minimumCellId61, systemMinimumCellVoltage),
             minimumRawId: wordHex(system.minimumCellId61),
-            spread: systemMaximumCellVoltage !== '—' && systemMinimumCellVoltage !== '—'
-                ? number(Number(systemMaximumCellVoltage) - Number(systemMinimumCellVoltage), 3)
-                : '—'
+            spread: number(aggregate.spread)
         },
         cellTemperature: {
             average: systemCellTemperatureAverage,
@@ -255,6 +254,7 @@ msg.payload = {
         addresses: (discovery.respondingAddresses || []).join(', ') || '—'
     },
     aggregate: {
+        source: aggregate.source === 'CID2_61_SYSTEM_SUMMARY' ? 'CID2 61 system summary' : '—',
         vmin: number(aggregate.vmin),
         vmax: number(aggregate.vmax),
         spread: number((aggregate.spread || 0) * 1000, 1),

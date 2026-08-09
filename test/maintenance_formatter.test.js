@@ -68,7 +68,17 @@ const valid = {
       active: [{ description: 'discharge enabled' }]
     }
   },
-  aggregate: { vmin: 3.346, vmax: 3.582, spread: 0.236 },
+  aggregate: {
+    source: 'CID2_61_SYSTEM_SUMMARY',
+    valid: true,
+    vmin: 3.342,
+    vmax: 3.524,
+    spread: 0.182,
+    minCellAddress: 2,
+    minCellIndex: 11,
+    maxCellAddress: 2,
+    maxCellIndex: 7
+  },
   batteries: [{
     address: 2,
     valid: true,
@@ -102,6 +112,7 @@ assert.equal(live.system.cellSummary.minimumId, 'Battery 2 · Cell 11')
 assert.equal(live.system.cellSummary.maximumRawId, '0x0702')
 assert.equal(live.system.cellSummary.minimumRawId, '0x0B02')
 assert.equal(live.system.cellSummary.spread, '0.182')
+assert.equal(live.aggregate.source, 'CID2 61 system summary')
 assert.equal(live.system.cellTemperature.maximumId, 'Battery 2 · Sensor 04')
 assert.equal(live.system.mosfetTemperature.minimumId, 'Battery 2 · Sensor 02')
 assert.equal(live.system.bmsTemperature.average, '34.2')
