@@ -75,6 +75,22 @@ service is separately selected as the active battery monitor, GX displays:
 - `/Dc/0/Current` as the complete sum of valid CID2 `0x42` battery currents;
 - `/Dc/0/Power` as voltage multiplied by summed current.
 
+The service also publishes the final virtual-BMS arbitration result through
+the standard `/Info/MaxChargeVoltage`, `/Info/MaxChargeCurrent`,
+`/Info/MaxDischargeCurrent`, `/Bms/AllowToCharge`, and
+`/Bms/AllowToDischarge` paths. Diagnostic `/Control/*` paths expose the
+controller request, command freshness/age, thermal factor, arbitration
+reason, and the active Cerbo BMS selection. `/State` includes a concise
+effective-output summary suitable for GX/VRM device status.
+
+The active source is selected manually in Cerbo at **Settings → System Setup
+→ Batteries → Battery monitor**. Choose `DYNESS-L BATTERY on CAN-bus`
+(`com.victronenergy.battery/512`) to use the normal CAN BMS, or `Dyness RS485
+virtual BMS` (`com.victronenergy.battery/100`) to let DVCC use the virtual
+BMS limits. The service never changes this setting and continues publishing
+diagnostics for both choices. The controller remains in TEST until its
+separate activation gate is explicitly passed.
+
 No partial current sum is published as authoritative. D-Bus publishing does
 not modify DVCC, charger settings, or battery configuration.
 

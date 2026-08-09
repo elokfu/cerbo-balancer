@@ -17,6 +17,7 @@ function telemetry (overrides = {}) {
   return {
     timestamp: clock, valid: true, cellTelemetryValid: true, soc: 99, vmax: 3.455, vmin: 3.42,
     ccl: 20, cvl: 56.5, packCurrent: 1.5, limits: { statusFlags: { chargeEnabled: true, dischargeEnabled: true } },
+    activeBms: { source: 'virtual', virtualSelected: true, label: 'RS485 virtual BMS active', activeBmsInstance: 100 },
     batteries: [battery()], expectedBatteries: [2], ...overrides
   }
 }
@@ -84,11 +85,25 @@ arbitration.handle({ type: 'telemetry', timestamp: clock, telemetry: telemetry({
     effectiveChargeCurrent: 20.0,
     reason: 'BMS_OR_SAFETY_LIMIT',
     commandFresh: true
+  },
+  activeBms: {
+    source: 'virtual',
+    label: 'RS485 virtual BMS active',
+    activeBmsInstance: 100
   }
 }) })
 assert.equal(arbitration.getStatus().virtualBms.requestedVoltage, 57.0)
 assert.equal(arbitration.getStatus().virtualBms.effectiveChargeCurrent, 20.0)
 assert.equal(arbitration.getStatus().virtualBms.reason, 'BMS_OR_SAFETY_LIMIT')
+assert.equal(arbitration.getStatus().activeBms.source, 'virtual')
+assert.equal(arbitration.getStatus().activeBms.activeBmsInstance, 100)
+
+const canSelected = createBalancerController({ now: () => clock })
+canSelected.handle({ type: 'telemetry', timestamp: clock, telemetry: telemetry({ activeBms: { source: 'can', virtualSelected: false, label: 'CAN Dyness BMS active', activeBmsInstance: 512 } }) })
+canSelected.handle({ type: 'set_output_ready', value: true, timestamp: clock })
+canSelected.handle({ type: 'set_mode', value: MODES.ACTIVE, timestamp: clock })
+assert.equal(canSelected.getStatus().mode, MODES.TEST)
+assert.match(canSelected.getEvents().at(-1).detail, /selected virtual BMS/)
 
 const testMode = createBalancerController({ now: () => clock })
 testMode.handle({ type: 'telemetry', timestamp: clock, telemetry: telemetry() })

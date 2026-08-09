@@ -123,6 +123,7 @@ function createBalancerController (options = {}) {
   }
   function selectedBattery () { return telemetry && (telemetry.batteries || []).find(b => b.address === state.selectedAddress) }
   function limitFlags () { return telemetry && telemetry.limits && telemetry.limits.statusFlags ? telemetry.limits.statusFlags : (telemetry && telemetry.statusFlags) || {} }
+  function virtualBmsSelected () { return Boolean(telemetry && telemetry.activeBms && (telemetry.activeBms.virtualSelected === true || telemetry.activeBms.source === 'virtual')) }
   function chargePermitted () { return bool(limitFlags().chargeEnabled) }
   function ccl () { return telemetry && finite(telemetry.ccl) ? Math.max(0, telemetry.ccl) : 0 }
   function hasProtection () {
@@ -186,6 +187,10 @@ function createBalancerController (options = {}) {
       if (state.state !== STATES.NORMAL) transition(STATES.NORMAL, timestamp, 'controller disabled')
       resetPi(); releaseSelection()
       command = safeNormalCommand('CONTROLLER_DISABLED')
+    } else if (state.mode === MODES.ACTIVE && !virtualBmsSelected()) {
+      state.fault = null; resetPi(); releaseSelection()
+      transition(STATES.NORMAL, timestamp, 'virtual BMS is not selected')
+      command = safeNormalCommand('VIRTUAL_BMS_NOT_SELECTED')
     } else if (!info.valid) {
       const balancingState = [STATES.BALANCE_ELIGIBILITY, STATES.BALANCE_RESTART, STATES.BALANCE_CURRENT_CONTROL, STATES.BALANCE_CONFIRM, STATES.BALANCE_DISCHARGE_RECOVERY, STATES.PROTECTION_RECOVERY].includes(state.state)
       if (balancingState || state.mode === MODES.ACTIVE) {
@@ -284,7 +289,8 @@ function createBalancerController (options = {}) {
   }
   function status (timestamp, info = freshTelemetry(timestamp), command = null) {
     const selected = selectedBattery(); const spread = selected && finite(selected.cellSpread) ? selected.cellSpread : null
-    return { state: state.state, mode: state.mode, enabled: state.enabled, autoManualMode: state.autoManualMode, selectedAddress: state.selectedAddress, selectedReason: state.selectedReason, cycleCount: state.cycleCount, lastStopReason: state.lastStopReason, fault: state.fault, lockout: state.mode === MODES.ACTIVE && !outputReady ? 'output readback is not verified' : info.lockout, telemetry: telemetry ? { ...telemetry, telemetryAge: info.age, valid: info.valid } : null, virtualBms: telemetry && telemetry.effectiveControl ? { ...telemetry.effectiveControl } : null, csvLogging: { ...state.csvLogging }, socEntryEligible: finite(telemetry && telemetry.soc) && telemetry.soc > config.socEntryThreshold, socContinuationEligible: finite(telemetry && telemetry.soc) && telemetry.soc > config.socExitThreshold, selectedCurrent: selected && selected.current, selectedSpread: spread, balancerLikelyActive: Boolean(selected && finite(selected.current) && selected.current >= config.balancerMinimumCurrent && finite(spread) && spread > config.balancerSpreadThreshold && command && command.chargeEnabled), aggregateCurrentCommand: state.aggregateCurrentCommand, lastCommand: command, config: { ...config }, outputReady, history: history.slice(), availableEvents: events.slice(-100), lastEvent: state.lastEvent }
+    const selectionLockout = state.mode === MODES.ACTIVE && !virtualBmsSelected() ? 'RS485 virtual BMS is not selected in Cerbo' : null
+    return { state: state.state, mode: state.mode, enabled: state.enabled, autoManualMode: state.autoManualMode, selectedAddress: state.selectedAddress, selectedReason: state.selectedReason, cycleCount: state.cycleCount, lastStopReason: state.lastStopReason, fault: state.fault, lockout: selectionLockout || (state.mode === MODES.ACTIVE && !outputReady ? 'output readback is not verified' : info.lockout), telemetry: telemetry ? { ...telemetry, telemetryAge: info.age, valid: info.valid } : null, activeBms: telemetry && telemetry.activeBms ? { ...telemetry.activeBms } : null, virtualBmsSelected: virtualBmsSelected(), virtualBms: telemetry && telemetry.effectiveControl ? { ...telemetry.effectiveControl } : null, csvLogging: { ...state.csvLogging }, socEntryEligible: finite(telemetry && telemetry.soc) && telemetry.soc > config.socEntryThreshold, socContinuationEligible: finite(telemetry && telemetry.soc) && telemetry.soc > config.socExitThreshold, selectedCurrent: selected && selected.current, selectedSpread: spread, balancerLikelyActive: Boolean(selected && finite(selected.current) && selected.current >= config.balancerMinimumCurrent && finite(spread) && spread > config.balancerSpreadThreshold && command && command.chargeEnabled), aggregateCurrentCommand: state.aggregateCurrentCommand, lastCommand: command, config: { ...config }, outputReady, history: history.slice(), availableEvents: events.slice(-100), lastEvent: state.lastEvent }
   }
   function handle (message = {}) {
     const timestamp = finite(message.timestamp) ? message.timestamp : now()
@@ -293,7 +299,7 @@ function createBalancerController (options = {}) {
     if (message.type === 'tick') return evaluate(timestamp)
     if (message.type === 'set_output_ready') { outputReady = message.value === true; return evaluate(timestamp) }
     if (message.type === 'set_enabled') { state.enabled = message.value === true; if (!state.enabled) { state.fault = null; resetPi(); releaseSelection(); transition(STATES.NORMAL, timestamp, 'controller disabled') } return evaluate(timestamp) }
-    if (message.type === 'set_mode') { if (message.value === MODES.ACTIVE && outputReady && validateConfig(config).valid) state.mode = MODES.ACTIVE; else if (message.value === MODES.TEST) state.mode = MODES.TEST; else record(timestamp, 'mode_rejected', 'ACTIVE requires verified output and valid configuration'); return evaluate(timestamp) }
+    if (message.type === 'set_mode') { if (message.value === MODES.ACTIVE && outputReady && virtualBmsSelected() && validateConfig(config).valid) state.mode = MODES.ACTIVE; else if (message.value === MODES.TEST) state.mode = MODES.TEST; else record(timestamp, 'mode_rejected', 'ACTIVE requires selected virtual BMS, verified output, and valid configuration'); return evaluate(timestamp) }
     if (message.type === 'set_auto_manual' && (message.value === 'AUTO' || message.value === 'MANUAL')) { state.autoManualMode = message.value; return evaluate(timestamp) }
     if (message.type === 'set_csv_logging') { const filename = typeof message.filename === 'string' ? message.filename.trim() : null; if (message.value === true && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,80}(?:\.csv)?$/.test(filename || '')) { record(timestamp, 'csv_logging_rejected', 'invalid CSV filename'); return evaluate(timestamp) } const normalized = message.value === true ? (filename.endsWith('.csv') ? filename : `${filename}.csv`) : null; state.csvLogging = { enabled: message.value === true, filename: normalized }; pendingCsvLogging = { ...state.csvLogging, timestamp }; return evaluate(timestamp) }
     if (message.type === 'manual_start') {

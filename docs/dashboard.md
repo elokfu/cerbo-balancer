@@ -57,6 +57,14 @@ above 97% and exits at or below 97%. It controls selected-battery current
 toward 2 A through aggregate DVCC current allowance, without assuming equal
 parallel current sharing.
 
+The controller page also reports the active Cerbo BMS source and DeviceInstance
+(`CAN Dyness BMS active`, instance `512`, or `RS485 virtual BMS active`,
+instance `100`). Its Virtual BMS / DVCC panel separates requested values from
+the final effective CVL, CCL, DCL, permissions, command freshness, thermal
+factor, and arbitration reason. With the virtual BMS selected in Cerbo, the
+standard effective values are the ones published to DVCC and visible through
+the selected battery monitor in VRM.
+
 The controller page includes live selected-current, selected Vmax/Vmin, and
 selected-spread graphs. Its configuration panel exposes SOC gates, spread and
 current targets, voltage ceilings, PI gains, aggregate limit, and recovery

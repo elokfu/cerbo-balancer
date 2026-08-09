@@ -8,7 +8,8 @@ CID2 `0x42` is authoritative for each battery's cells, voltage, signed
 current, and temperatures. When 15 cells are returned, cell 16 is calculated
 from that same battery's CID2 `0x42` voltage. CID2 `0x61` is only a system
 voltage/SOC cross-check and is never used to reconstruct a cell. Victron DVCC
-remains enabled and unchanged.
+remains enabled; the battery source is selected manually in Cerbo for
+commissioning.
 
 ## Current commissioning boundary
 
@@ -68,5 +69,13 @@ to that port, and repeats the handoff after a USB reconnect. CAN, DVCC, and
 unrelated serial ports are not changed.
 
 No credentials are stored in this repository.
+
+The service publishes the RS485 virtual BMS as DeviceInstance `100` alongside
+the normal Dyness CAN BMS at instance `512`. Cerbo selection is manual at
+`Settings → System Setup → Batteries → Battery monitor`; the service never
+changes it. Standard D-Bus limit paths show final effective virtual-BMS
+outputs, while the balancer page and logs show requested-versus-effective
+arbitration details. The current CAN selection remains the default until the
+commissioning handover is deliberately performed.
 
 See [RS485 investigation](docs/rs485-investigation.md), [dashboard operation](docs/dashboard.md), and [DVCC handover](docs/dvcc-handover.md).

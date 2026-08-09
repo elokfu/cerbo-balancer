@@ -406,6 +406,41 @@ class DynessServiceTests(unittest.TestCase):
             store.ensure_json("cerbo-balancer-config.json", {"mode": "TEST"})
             self.assertEqual(store.read_json("cerbo-balancer-config.json")["mode"], "TEST")
 
+    def test_active_bms_selection_decodes_cerbo_system_readback(self):
+        virtual = service.active_bms_selection({
+            "ActiveBatteryService": "com.victronenergy.battery/100",
+            "ActiveBmsService": service.VIRTUAL_BATTERY_SERVICE,
+            "ActiveBmsInstance": 100,
+        })
+        self.assertEqual(virtual["source"], "virtual")
+        self.assertTrue(virtual["virtualSelected"])
+        self.assertEqual(virtual["label"], "RS485 virtual BMS active")
+
+        can = service.active_bms_selection({
+            "ActiveBatteryService": service.CAN_BATTERY_SELECTION,
+            "ActiveBmsService": "com.victronenergy.battery.socketcan_can1",
+            "ActiveBmsInstance": 512,
+        })
+        self.assertEqual(can["source"], "can")
+        self.assertFalse(can["virtualSelected"])
+        self.assertEqual(can["label"], "CAN Dyness BMS active")
+
+    def test_virtual_bms_state_contains_effective_values_and_active_source(self):
+        state = service.virtual_bms_state(
+            {
+                "effectiveChargeVoltage": 55.2,
+                "effectiveChargeCurrent": 56.0,
+                "effectiveChargeEnabled": True,
+                "reason": "BMS_LIMITS_ACCEPTED",
+            },
+            {"label": "RS485 virtual BMS active"},
+        )
+        self.assertEqual(
+            state,
+            "RS485 virtual BMS active · CVL 55.20 V · CCL 56.0 A · "
+            "charge enabled · BMS_LIMITS_ACCEPTED",
+        )
+
     def test_rolling_telemetry_redacts_raw_data_and_writes_compact_summary(self):
         timestamp = 1_700_000_000_000
         snapshot = {

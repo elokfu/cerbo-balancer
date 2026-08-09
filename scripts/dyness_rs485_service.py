@@ -60,6 +60,9 @@ STATUS44_QUERY_TIMEOUT = 0.25
 NORMAL_DISCOVERY_PROBES_PER_POLL = 2
 RECOVERY_DISCOVERY_PROBES_PER_POLL = len(EXPECTED_ADDRESSES)
 DISCOVERY_QUERY_TIMEOUT = 0.12
+VIRTUAL_BATTERY_SERVICE = "com.victronenergy.battery.rs485_dyness"
+VIRTUAL_BATTERY_SELECTION = "com.victronenergy.battery/100"
+CAN_BATTERY_SELECTION = "com.victronenergy.battery/512"
 
 
 def now_ms() -> int:
@@ -79,6 +82,54 @@ def cerbo_timezone() -> tuple[str, Any]:
     except (ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError):
         local_timezone = datetime.now().astimezone().tzinfo
         return "system-local", local_timezone
+
+
+def active_bms_selection(values: dict[str, Any]) -> dict[str, Any]:
+    """Normalize systemcalc's active battery/BMS selection readback."""
+    battery_service = str(values.get("ActiveBatteryService") or "")
+    bms_service = str(values.get("ActiveBmsService") or "")
+    try:
+        instance = int(values.get("ActiveBmsInstance"))
+    except (TypeError, ValueError):
+        instance = None
+
+    if (
+        instance == 100
+        or battery_service == VIRTUAL_BATTERY_SELECTION
+        or bms_service == VIRTUAL_BATTERY_SERVICE
+    ):
+        source = "virtual"
+        label = "RS485 virtual BMS active"
+    elif instance == 512 or battery_service == CAN_BATTERY_SELECTION:
+        source = "can"
+        label = "CAN Dyness BMS active"
+    else:
+        source = "unknown"
+        label = "BMS selection unknown"
+
+    return {
+        "source": source,
+        "label": label,
+        "virtualSelected": source == "virtual",
+        "activeBatteryService": battery_service or None,
+        "activeBmsService": bms_service or None,
+        "activeBmsInstance": instance,
+        "readbackValid": bool(battery_service or bms_service or instance is not None),
+    }
+
+
+def virtual_bms_state(control: dict[str, Any], selection: dict[str, Any]) -> str:
+    """Create the concise human-readable state shown by GX/VRM."""
+    cvl = control.get("effectiveChargeVoltage")
+    ccl = control.get("effectiveChargeCurrent")
+    charge = "enabled" if control.get("effectiveChargeEnabled") else "inhibited"
+    cvl_text = f"{float(cvl):.2f} V" if isinstance(cvl, (int, float)) else "—"
+    ccl_text = f"{float(ccl):.1f} A" if isinstance(ccl, (int, float)) else "—"
+    return (
+        f"{selection.get('label', 'BMS selection unknown')} · "
+        f"CVL {cvl_text} · CCL {ccl_text} · charge {charge} · "
+        f"{control.get('reason') or 'no arbitration reason'}"
+    )
 
 
 def default_serial_health() -> dict[str, Any]:
@@ -1135,7 +1186,8 @@ class DbusPublisher:
             self.Item = Item
             self.Root = Root
             self.bus = dbus.SystemBus()
-            self.name = dbus.service.BusName("com.victronenergy.battery.rs485_dyness", self.bus)
+            self.system_root = self.bus.get_object("com.victronenergy.system", "/")
+            self.name = dbus.service.BusName(VIRTUAL_BATTERY_SERVICE, self.bus)
             self.objects = {}
             defaults = {
                 "/DeviceInstance": dbus.UInt32(100),
@@ -1160,6 +1212,21 @@ class DbusPublisher:
                 "/Bms/UnknownStatusBits": dbus.UInt32(0),
                 "/Connected": dbus.Boolean(False),
                 "/State": dbus.String("RS485 unavailable"),
+                "/Control/RequestedChargeVoltage": dbus.Double(0.0),
+                "/Control/RequestedChargeCurrent": dbus.Double(0.0),
+                "/Control/RequestedChargeEnabled": dbus.Boolean(False),
+                "/Control/CommandFresh": dbus.Boolean(False),
+                "/Control/CommandAge": dbus.UInt32(0),
+                "/Control/ThermalFactor": dbus.Double(0.0),
+                "/Control/OutputValid": dbus.Boolean(False),
+                "/Control/ArbitrationReason": dbus.String("RS485 unavailable"),
+                "/Control/CommandReason": dbus.String("none"),
+                "/Control/BmsChargeVoltage": dbus.Double(0.0),
+                "/Control/BmsChargeCurrent": dbus.Double(0.0),
+                "/Control/ActiveBmsService": dbus.String(""),
+                "/Control/ActiveBmsInstance": dbus.Int32(-1),
+                "/Control/ActiveBmsLabel": dbus.String("BMS selection unknown"),
+                "/Control/OutputMode": dbus.String("TEST/shadow"),
             }
             for path, value in defaults.items():
                 self.objects[path] = Item(self.bus, path, value)
@@ -1168,6 +1235,21 @@ class DbusPublisher:
             threading.Thread(target=GLib.MainLoop().run, daemon=True).start()
         except Exception:
             self.available = False
+
+    def read_active_selection(self) -> dict[str, Any]:
+        if not self.available:
+            return active_bms_selection({})
+        try:
+            values = self.system_root.GetValue(dbus_interface="com.victronenergy.BusItem")
+            normalized = {str(key): value for key, value in dict(values).items()}
+            return active_bms_selection(normalized)
+        except Exception:
+            return active_bms_selection({})
+
+    def annotate_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        value = dict(snapshot)
+        value["activeBms"] = self.read_active_selection()
+        return value
 
     def update(self, snapshot: dict[str, Any]) -> None:
         if not self.available:
@@ -1178,12 +1260,19 @@ class DbusPublisher:
         aggregate = snapshot.get("aggregate") or {}
         control = snapshot.get("effectiveControl") or {}
         status_flags = limits.get("statusFlags") or {}
-        status_active = status_flags.get("active") or []
+        selection = snapshot.get("activeBms") or self.read_active_selection()
         voltage = system.get("voltage61") if snapshot.get("valid") else 53.0
         current = aggregate.get("summedBatteryCurrent") if snapshot.get("valid") else 0.0
         ccl = control.get("effectiveChargeCurrent") if snapshot.get("valid") else 0.0
         dcl = control.get("effectiveDischargeCurrent") if snapshot.get("valid") else 0.0
         cvl = control.get("effectiveChargeVoltage") if snapshot.get("valid") else 53.0
+        requested_voltage = control.get("requestedVoltage")
+        requested_current = control.get("requestedCurrent")
+        command_age = control.get("commandAgeMs")
+        command_age = max(0, min(int(command_age), 0xFFFFFFFF)) if isinstance(command_age, (int, float)) else 0
+        active_instance = selection.get("activeBmsInstance")
+        active_instance = active_instance if isinstance(active_instance, int) else -1
+        state_text = virtual_bms_state(control, selection)
         values = {
             "/Soc": dbus.Double(float(system.get("soc61") or 0.0)),
             "/Dc/0/Voltage": dbus.Double(float(voltage or 53.0)),
@@ -1202,11 +1291,22 @@ class DbusPublisher:
             "/Bms/FullCharge": dbus.Boolean(bool(status_flags.get("fullCharge"))),
             "/Bms/UnknownStatusBits": dbus.UInt32(int(status_flags.get("unknownReservedBits") or 0)),
             "/Connected": dbus.Boolean(bool(snapshot.get("valid"))),
-            "/State": dbus.String(
-                ", ".join(item["description"] for item in status_active)
-                if status_active else "Valid RS485 telemetry" if snapshot.get("valid")
-                else snapshot.get("reason") or "RS485 unavailable"
-            ),
+            "/State": dbus.String(state_text if control else snapshot.get("reason") or "RS485 unavailable"),
+            "/Control/RequestedChargeVoltage": dbus.Double(float(requested_voltage or 0.0)),
+            "/Control/RequestedChargeCurrent": dbus.Double(float(requested_current or 0.0)),
+            "/Control/RequestedChargeEnabled": dbus.Boolean(bool(control.get("controllerChargeEnabled"))),
+            "/Control/CommandFresh": dbus.Boolean(bool(control.get("commandFresh"))),
+            "/Control/CommandAge": dbus.UInt32(command_age),
+            "/Control/ThermalFactor": dbus.Double(float(control.get("thermalFactor") or 0.0)),
+            "/Control/OutputValid": dbus.Boolean(bool(control.get("outputValid"))),
+            "/Control/ArbitrationReason": dbus.String(str(control.get("reason") or "none")),
+            "/Control/CommandReason": dbus.String(str(control.get("commandReason") or "none")),
+            "/Control/BmsChargeVoltage": dbus.Double(float(control.get("bmsChargeVoltage") or 0.0)),
+            "/Control/BmsChargeCurrent": dbus.Double(float(control.get("bmsChargeCurrent") or 0.0)),
+            "/Control/ActiveBmsService": dbus.String(str(selection.get("activeBmsService") or "")),
+            "/Control/ActiveBmsInstance": dbus.Int32(active_instance),
+            "/Control/ActiveBmsLabel": dbus.String(str(selection.get("label") or "BMS selection unknown")),
+            "/Control/OutputMode": dbus.String("ACTIVE" if control.get("mode") == "ACTIVE" else "TEST/shadow"),
         }
         for path, value in values.items():
             if path in self.objects:
@@ -1238,7 +1338,7 @@ def main() -> int:
         snapshot = poller.poll(store.read_json("cerbo-balancer-command.json"))
         csv_logger.write(snapshot, store.read_json("cerbo-balancer-csv-logging.json"))
         store.write_json("cerbo-balancer-rs485-inventory.json", poller.export_inventory())
-        published_snapshot = telemetry_store.record(snapshot)
+        published_snapshot = telemetry_store.record(dbus_publisher.annotate_snapshot(snapshot))
         dbus_publisher.update(published_snapshot)
         print(json.dumps(published_snapshot, separators=(",", ":")), flush=True)
         if args.once:
