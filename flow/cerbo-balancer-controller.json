@@ -868,7 +868,7 @@
     "id": "bal-logs-list",
     "type": "exec",
     "z": "bal-tab",
-    "command": "ls -ln /data/home/nodered/cerbo-balancer-csv/*.csv 2>/dev/null | awk '{print $NF \"|\" $5 \"|\" $6 \" \" $7 \" \" $8}'",
+    "command": "ls -ln /data/home/nodered/cerbo-balancer-csv/*.csv 2>/dev/null | awk '{name=$NF; sub(/^.*\\//,\"\",name); print name \"|\" $5 \"|\" $6 \" \" $7 \" \" $8}'",
     "addpay": false,
     "append": "",
     "useSpawn": "false",
