@@ -60,7 +60,8 @@ function emptyState () {
     confirmationStartedAt: null, protectionClearStartedAt: null,
     integralTerm: 0, aggregateCurrentCommand: 0, lastEvaluationAt: null,
     lastControlSampleTimestamp: null,
-    lastTransitionAt: null, lastStopReason: null, fault: null, lastEvent: null
+    lastTransitionAt: null, lastStopReason: null, fault: null, lastEvent: null,
+    csvLogging: { enabled: false, filename: null }
   }
 }
 
@@ -97,6 +98,7 @@ function createBalancerController (options = {}) {
   const events = []
   const history = []
   let lastPersistenceKey = null
+  let pendingCsvLogging = null
 
   function record (timestamp, type, detail, extra = {}) {
     const event = { timestamp, date: localDate(timestamp), type, detail, ...extra }
@@ -269,6 +271,7 @@ function createBalancerController (options = {}) {
     const persistenceKey = JSON.stringify(persistence)
     state.lastEvaluationAt = timestamp
     actions.push({ type: 'controller_command', value: controllerCommand })
+    if (pendingCsvLogging) { actions.push({ type: 'csv_logging', value: pendingCsvLogging }); pendingCsvLogging = null }
     if (persistenceKey !== lastPersistenceKey) {
       lastPersistenceKey = persistenceKey
       actions.push({ type: 'persist', ...persistence })
@@ -278,7 +281,7 @@ function createBalancerController (options = {}) {
   }
   function status (timestamp, info = freshTelemetry(timestamp), command = null) {
     const selected = selectedBattery(); const spread = selected && finite(selected.cellSpread) ? selected.cellSpread : null
-    return { state: state.state, mode: state.mode, enabled: state.enabled, autoManualMode: state.autoManualMode, selectedAddress: state.selectedAddress, selectedReason: state.selectedReason, cycleCount: state.cycleCount, lastStopReason: state.lastStopReason, fault: state.fault, lockout: state.mode === MODES.ACTIVE && !outputReady ? 'output readback is not verified' : info.lockout, telemetry: telemetry ? { ...telemetry, telemetryAge: info.age, valid: info.valid } : null, socEntryEligible: finite(telemetry && telemetry.soc) && telemetry.soc > config.socEntryThreshold, socContinuationEligible: finite(telemetry && telemetry.soc) && telemetry.soc > config.socExitThreshold, selectedCurrent: selected && selected.current, selectedSpread: spread, balancerLikelyActive: Boolean(selected && finite(selected.current) && selected.current >= config.balancerMinimumCurrent && finite(spread) && spread > config.balancerSpreadThreshold && command && command.chargeEnabled), aggregateCurrentCommand: state.aggregateCurrentCommand, lastCommand: command, config: { ...config }, outputReady, history: history.slice(), availableEvents: events.slice(-100), lastEvent: state.lastEvent }
+    return { state: state.state, mode: state.mode, enabled: state.enabled, autoManualMode: state.autoManualMode, selectedAddress: state.selectedAddress, selectedReason: state.selectedReason, cycleCount: state.cycleCount, lastStopReason: state.lastStopReason, fault: state.fault, lockout: state.mode === MODES.ACTIVE && !outputReady ? 'output readback is not verified' : info.lockout, telemetry: telemetry ? { ...telemetry, telemetryAge: info.age, valid: info.valid } : null, csvLogging: { ...state.csvLogging }, socEntryEligible: finite(telemetry && telemetry.soc) && telemetry.soc > config.socEntryThreshold, socContinuationEligible: finite(telemetry && telemetry.soc) && telemetry.soc > config.socExitThreshold, selectedCurrent: selected && selected.current, selectedSpread: spread, balancerLikelyActive: Boolean(selected && finite(selected.current) && selected.current >= config.balancerMinimumCurrent && finite(spread) && spread > config.balancerSpreadThreshold && command && command.chargeEnabled), aggregateCurrentCommand: state.aggregateCurrentCommand, lastCommand: command, config: { ...config }, outputReady, history: history.slice(), availableEvents: events.slice(-100), lastEvent: state.lastEvent }
   }
   function handle (message = {}) {
     const timestamp = finite(message.timestamp) ? message.timestamp : now()
@@ -289,6 +292,7 @@ function createBalancerController (options = {}) {
     if (message.type === 'set_enabled') { state.enabled = message.value === true; if (!state.enabled) { state.fault = null; resetPi(); releaseSelection(); transition(STATES.NORMAL, timestamp, 'controller disabled') } return evaluate(timestamp) }
     if (message.type === 'set_mode') { if (message.value === MODES.ACTIVE && outputReady && validateConfig(config).valid) state.mode = MODES.ACTIVE; else if (message.value === MODES.TEST) state.mode = MODES.TEST; else record(timestamp, 'mode_rejected', 'ACTIVE requires verified output and valid configuration'); return evaluate(timestamp) }
     if (message.type === 'set_auto_manual' && (message.value === 'AUTO' || message.value === 'MANUAL')) { state.autoManualMode = message.value; return evaluate(timestamp) }
+    if (message.type === 'set_csv_logging') { const filename = typeof message.filename === 'string' ? message.filename.trim() : null; if (message.value === true && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,80}(?:\.csv)?$/.test(filename || '')) { record(timestamp, 'csv_logging_rejected', 'invalid CSV filename'); return evaluate(timestamp) } const normalized = message.value === true ? (filename.endsWith('.csv') ? filename : `${filename}.csv`) : null; state.csvLogging = { enabled: message.value === true, filename: normalized }; pendingCsvLogging = { ...state.csvLogging, timestamp }; return evaluate(timestamp) }
     if (message.type === 'manual_start') {
       state.autoManualMode = 'MANUAL'
       const manualBattery = message.address

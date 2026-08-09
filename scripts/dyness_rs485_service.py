@@ -10,6 +10,7 @@ unavailable snapshot and remains safe to run in shadow mode.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import subprocess
@@ -34,6 +35,7 @@ from dyness_rs485_protocol import (
 
 DEFAULT_PORT = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A602K5MM-if00-port0"
 DEFAULT_STATE_DIR = "/data/home/nodered"
+CSV_LOG_DIRECTORY = "cerbo-balancer-csv"
 EXPECTED_ADDRESSES = tuple(range(2, 17))
 NORMAL_DISCOVERY_INTERVAL = 60.0
 RECOVERY_DISCOVERY_INTERVAL = 10.0
@@ -118,6 +120,42 @@ class JsonlStore:
             return value if isinstance(value, dict) else None
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             return None
+
+
+class CsvLogger:
+    columns = ["timestamp", "system_voltage_v", "soc_percent", "bms_temperature_c", "vmin_v", "vmax_v", "spread_mv", "battery_current_a", "ccl_a", "dcl_a", "charge_enabled", "discharge_enabled"] + [f"battery_{address:02d}_{field}" for address in EXPECTED_ADDRESSES for field in (["present", "valid", "voltage_v", "current_a", "status1", "status2", "status3", "status4", "status5"] + [f"cell_{index:02d}_v" for index in range(1, 17)] + [f"temp_{index:02d}_c" for index in range(1, 33)])]
+
+    def __init__(self, root: str):
+        self.directory = Path(root) / CSV_LOG_DIRECTORY
+        self.directory.mkdir(parents=True, exist_ok=True)
+
+    def write(self, snapshot: dict[str, Any], control: dict[str, Any] | None) -> None:
+        if not control or control.get("enabled") is not True or not snapshot.get("valid"):
+            return
+        name = control.get("filename")
+        if not isinstance(name, str) or not name.endswith(".csv") or "/" in name or "\\" in name or name != Path(name).name:
+            return
+        target = self.directory / name
+        exists = target.exists()
+        if exists:
+            with target.open("r", encoding="utf-8") as stream:
+                header = next((line.rstrip("\n") for line in stream if not line.startswith("#")), "")
+            if header != ",".join(self.columns):
+                return
+        system, limits, aggregate = snapshot.get("system") or {}, snapshot.get("limits") or {}, snapshot.get("aggregate") or {}
+        row = {column: "" for column in self.columns}
+        row.update({"timestamp": snapshot.get("timestamp"), "system_voltage_v": system.get("voltage61"), "soc_percent": system.get("soc61"), "bms_temperature_c": system.get("maximumBmsTemperature61"), "vmin_v": aggregate.get("vmin"), "vmax_v": aggregate.get("vmax"), "spread_mv": aggregate.get("spread", 0) * 1000 if isinstance(aggregate.get("spread"), (int, float)) else None, "battery_current_a": aggregate.get("summedBatteryCurrent"), "ccl_a": limits.get("chargeCurrent"), "dcl_a": limits.get("dischargeCurrentSigned"), "charge_enabled": (limits.get("statusFlags") or {}).get("chargeEnabled"), "discharge_enabled": (limits.get("statusFlags") or {}).get("dischargeEnabled")})
+        for battery in snapshot.get("batteries") or []:
+            prefix = f"battery_{int(battery.get('address')):02d}_"; row[prefix + "present"] = True; row[prefix + "valid"] = battery.get("valid"); row[prefix + "voltage_v"] = battery.get("voltage"); row[prefix + "current_a"] = battery.get("current")
+            status = battery.get("status44") or {}
+            for index in range(1, 6): row[prefix + f"status{index}"] = (status.get(f"status{index}") or {}).get("raw")
+            for cell in battery.get("effectiveCells") or []: row[prefix + f"cell_{int(cell.get('index')):02d}_v"] = cell.get("voltage")
+            for index, value in enumerate(battery.get("temperatures") or [], 1): row[prefix + f"temp_{index:02d}_c"] = value
+        with target.open("a", newline="", encoding="utf-8") as stream:
+            if not exists:
+                stream.write(f"# schema_version=1\n# serial_port={snapshot.get('serialPort')}\n# baud={snapshot.get('baud')}\n# poll_interval_seconds=6\n")
+                csv.DictWriter(stream, fieldnames=self.columns).writeheader()
+            csv.DictWriter(stream, fieldnames=self.columns).writerow(row)
 
 
 def thermal_factor(snapshot: dict[str, Any]) -> float:
@@ -778,13 +816,16 @@ def main() -> int:
     store.ensure_json("cerbo-balancer-config.json", {"mode": "TEST", "enabled": False})
     store.ensure_json("cerbo-balancer-state.json", {"version": 1, "state": "NORMAL", "mode": "TEST"})
     store.ensure_json("cerbo-balancer-command.json", {"version": 0, "mode": "TEST"})
+    store.ensure_json("cerbo-balancer-csv-logging.json", {"enabled": False, "filename": None})
     store.ensure_json("cerbo-balancer-rs485-inventory.json", {"version": 1, "activeAddresses": [], "pendingRemoval": [], "lastSeenAt": {}})
     store.ensure_json("cerbo-balancer-sessions.jsonl", {})
     poller = ReadOnlyPoller(args.port, args.baud, args.timeout, store.read_json("cerbo-balancer-rs485-inventory.json"))
     dbus_publisher = DbusPublisher()
+    csv_logger = CsvLogger(args.state_dir)
     while True:
         cycle_started = time.monotonic()
         snapshot = poller.poll(store.read_json("cerbo-balancer-command.json"))
+        csv_logger.write(snapshot, store.read_json("cerbo-balancer-csv-logging.json"))
         store.write_json("cerbo-balancer-rs485-inventory.json", poller.export_inventory())
         store.append("cerbo-balancer-telemetry.jsonl", snapshot)
         dbus_publisher.update(snapshot)
