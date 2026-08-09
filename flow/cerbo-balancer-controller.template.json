@@ -628,7 +628,7 @@
     "id": "bal-logs-refresh", "type": "inject", "z": "bal-tab", "name": "Refresh CSV log library", "props": [{"p":"payload"}], "repeat": "5", "once": true, "onceDelay": "1", "topic": "", "payload": "", "payloadType": "str", "x": 190, "y": 1020, "wires": [["bal-logs-list"]]
   },
   {
-    "id": "bal-logs-list", "type": "exec", "z": "bal-tab", "command": "find /data/home/nodered/cerbo-balancer-csv -maxdepth 1 -type f -name '*.csv' -printf '%f|%s|%TY-%Tm-%Td %TH:%TM\\n' 2>/dev/null", "addpay": false, "append": "", "useSpawn": "false", "timer": "", "winHide": false, "name": "List CSV logs", "x": 450, "y": 1020, "wires": [["bal-logs-format"], [], []]
+    "id": "bal-logs-list", "type": "exec", "z": "bal-tab", "command": "ls -ln /data/home/nodered/cerbo-balancer-csv/*.csv 2>/dev/null | awk '{print $NF \"|\" $5 \"|\" $6 \" \" $7 \" \" $8}'", "addpay": false, "append": "", "useSpawn": "false", "timer": "", "winHide": false, "name": "List CSV logs", "x": 450, "y": 1020, "wires": [["bal-logs-format"], [], []]
   },
   {
     "id": "bal-logs-format", "type": "function", "z": "bal-tab", "name": "Format CSV log library", "func": "msg.payload = String(msg.payload || '').trim().split('\\n').filter(Boolean).map(line => { const [name,size,modified] = line.split('|'); return { name, size, modified, href: '/balancer-csv-download?name=' + encodeURIComponent(name) }; }); return msg;", "outputs": 1, "x": 700, "y": 1020, "wires": [["bal-logs-view"]]

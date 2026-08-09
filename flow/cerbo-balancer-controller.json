@@ -868,7 +868,7 @@
     "id": "bal-logs-list",
     "type": "exec",
     "z": "bal-tab",
-    "command": "find /data/home/nodered/cerbo-balancer-csv -maxdepth 1 -type f -name '*.csv' -printf '%f|%s|%TY-%Tm-%Td %TH:%TM\\n' 2>/dev/null",
+    "command": "ls -ln /data/home/nodered/cerbo-balancer-csv/*.csv 2>/dev/null | awk '{print $NF \"|\" $5 \"|\" $6 \" \" $7 \" \" $8}'",
     "addpay": false,
     "append": "",
     "useSpawn": "false",
