@@ -619,7 +619,7 @@
     "wires": [["bal-rs485-read"]]
   },
   {
-    "id": "bal-logs-page", "type": "ui-page", "name": "Balancer CSV Logs", "ui": "93f5777d13b8710a", "path": "/balancer-logs", "icon": "download", "layout": "grid", "theme": "2f1c77dc3fd27bf0", "breakpoints": [{"name":"Default","px":0,"cols":3},{"name":"Desktop","px":1024,"cols":12}], "order": 5, "className": "", "visible": "true", "disabled": "false"
+    "id": "bal-logs-page", "type": "ui-page", "name": "Balancer CSV Logs", "ui": "93f5777d13b8710a", "path": "/balancer-logs", "icon": "download", "layout": "grid", "theme": "2f1c77dc3fd27bf0", "breakpoints": [{"name":"Default","px":0,"cols":3},{"name":"Tablet","px":576,"cols":6},{"name":"Small Desktop","px":768,"cols":9},{"name":"Desktop","px":1024,"cols":12}], "order": 5, "className": "", "visible": "true", "disabled": "false"
   },
   {
     "id": "bal-logs-group", "type": "ui-group", "name": "CSV download library", "page": "bal-logs-page", "width": 12, "height": 10, "order": 1, "showTitle": true, "className": "", "visible": true, "disabled": false, "groupType": "default"
