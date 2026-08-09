@@ -98,6 +98,7 @@ recording session rather than writing partial rows.
 The CSV header contains the constant serial metadata and initial battery
 addresses. Each battery contributes 16 cell-voltage fields and five
 temperature fields. Cell voltages are always written in volts with three
-decimal places. Each data row uses local Cerbo time as `HH:MM:SS` and includes
-a monotonic `sample_number`, so recordings longer than 24 hours remain
-unambiguous without storing a calendar date.
+decimal places. Pack voltages, temperatures, currents, and spreads are
+written with two decimal places, while spreads are whole millivolts. Each data row uses local Cerbo time as
+`HH:MM:SS` and includes a monotonic `sample_number`, so recordings longer than
+24 hours remain unambiguous without storing a calendar date.

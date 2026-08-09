@@ -631,10 +631,10 @@
     "id": "bal-logs-list", "type": "exec", "z": "bal-tab", "command": "ls -ln /data/home/nodered/cerbo-balancer-csv/*.csv 2>/dev/null | awk '{name=$NF; sub(/^.*\\//,\"\",name); print name \"|\" $5 \"|\" $6 \" \" $7 \" \" $8}'", "addpay": false, "append": "", "useSpawn": "false", "timer": "", "winHide": false, "name": "List CSV logs", "x": 450, "y": 1020, "wires": [["bal-logs-format"], [], []]
   },
   {
-    "id": "bal-logs-format", "type": "function", "z": "bal-tab", "name": "Format CSV log library", "func": "msg.payload = String(msg.payload || '').trim().split('\\n').filter(Boolean).map(line => { const [name,size,modified] = line.split('|'); return { name, size, modified, href: '/balancer-csv-download?name=' + encodeURIComponent(name) }; }); return msg;", "outputs": 1, "x": 700, "y": 1020, "wires": [["bal-logs-view"]]
+    "id": "bal-logs-format", "type": "function", "z": "bal-tab", "name": "Format CSV log library", "func": "msg.payload = String(msg.payload || '').trim().split('\\n').filter(Boolean).map(line => { const [name,size,modified] = line.split('|'); return { name, size, modified, href: '/balancer-csv-download?name=' + encodeURIComponent(name), deleteHref: '/balancer-csv-delete?name=' + encodeURIComponent(name) }; }); return msg;", "outputs": 1, "x": 700, "y": 1020, "wires": [["bal-logs-view"]]
   },
   {
-    "id": "bal-logs-view", "type": "ui-template", "z": "bal-tab", "group": "bal-logs-group", "page": "", "ui": "", "name": "CSV log library", "order": 1, "width": 12, "height": 10, "head": "", "format": "<template><div><p>CSV sessions stored on the Cerbo. Select a file to download.</p><table><thead><tr><th>Filename</th><th>Modified</th><th>Size</th><th></th></tr></thead><tbody><tr v-for=\"f in (msg?.payload || [])\" :key=\"f.name\"><td>{{f.name}}</td><td>{{f.modified}}</td><td>{{f.size}} bytes</td><td><a :href=\"f.href\" target=\"_blank\" rel=\"noopener\" download>Download</a></td></tr></tbody></table><p v-if=\"!(msg?.payload || []).length\">No CSV files yet.</p></div></template><style>table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid #ddd}</style>", "storeOutMessages": true, "passthru": false, "resendOnRefresh": true, "templateScope": "local", "className": "", "x": 970, "y": 1020, "wires": [[]]
+    "id": "bal-logs-view", "type": "ui-template", "z": "bal-tab", "group": "bal-logs-group", "page": "", "ui": "", "name": "CSV log library", "order": 1, "width": 12, "height": 10, "head": "", "format": "<template><div><p>CSV sessions stored on the Cerbo. Select a file to download or delete.</p><table><thead><tr><th>Filename</th><th>Modified</th><th>Size</th><th></th></tr></thead><tbody><tr v-for=\"f in (msg?.payload || [])\" :key=\"f.name\"><td>{{f.name}}</td><td>{{f.modified}}</td><td>{{f.size}} bytes</td><td><a :href=\"f.href\" target=\"_blank\" rel=\"noopener\" download>Download</a> <button type=\"button\" @click=\"deleteFile(f)\">Delete</button></td></tr></tbody></table><p v-if=\"!(msg?.payload || []).length\">No CSV files yet.</p></div></template><script>export default { methods: { async deleteFile (file) { if (!window.confirm(`Delete ${file.name}?`)) return; const response = await fetch(file.deleteHref, { method: 'POST' }); if (!response.ok) { window.alert('Delete failed'); return } this.send({ topic: 'refresh_csv_logs', payload: '' }) } } }</script><style>table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:7px;border-bottom:1px solid #ddd}button{margin-left:6px}</style>", "storeOutMessages": true, "passthru": false, "resendOnRefresh": true, "templateScope": "local", "className": "", "x": 970, "y": 1020, "wires": [["bal-logs-list"]]
   },
   {
     "id": "bal-csv-download", "type": "http in", "z": "bal-tab", "name": "CSV download", "url": "/balancer-csv-download", "method": "get", "upload": false, "swaggerDoc": "", "x": 190, "y": 1080, "wires": [["bal-csv-download-path"]]
@@ -647,5 +647,20 @@
   },
   {
     "id": "bal-csv-download-response", "type": "http response", "z": "bal-tab", "name": "Send CSV download", "statusCode": "", "headers": {}, "x": 970, "y": 1080, "wires": []
+  },
+  {
+    "id": "bal-csv-delete", "type": "http in", "z": "bal-tab", "name": "CSV delete", "url": "/balancer-csv-delete", "method": "post", "upload": false, "swaggerDoc": "", "x": 190, "y": 1140, "wires": [["bal-csv-delete-path"]]
+  },
+  {
+    "id": "bal-csv-delete-path", "type": "function", "z": "bal-tab", "name": "Validate CSV delete path", "func": "const name = msg.req?.query?.name; if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,80}\\.csv$/.test(name)) { msg.statusCode=400; msg.headers={'Content-Type':'text/plain; charset=utf-8'}; msg.payload='Invalid CSV filename'; return [null,msg]; } msg.filename='/data/home/nodered/cerbo-balancer-csv/'+name; return [msg,null];", "outputs": 2, "x": 460, "y": 1140, "wires": [["bal-csv-delete-file"], ["bal-csv-delete-http-response"]]
+  },
+  {
+    "id": "bal-csv-delete-file", "type": "file", "z": "bal-tab", "name": "Delete CSV file", "filename": "filename", "filenameType": "msg", "appendNewline": false, "createDir": false, "overwriteFile": "delete", "encoding": "none", "x": 700, "y": 1140, "wires": [["bal-csv-delete-response"]]
+  },
+  {
+    "id": "bal-csv-delete-response", "type": "function", "z": "bal-tab", "name": "Send CSV delete result", "func": "msg.statusCode = 200; msg.headers = {'Content-Type':'application/json; charset=utf-8'}; msg.payload = JSON.stringify({ deleted: true }); return msg;", "outputs": 1, "x": 970, "y": 1140, "wires": [["bal-csv-delete-http-response"]]
+  },
+  {
+    "id": "bal-csv-delete-http-response", "type": "http response", "z": "bal-tab", "name": "CSV delete response", "statusCode": "", "headers": {}, "x": 1220, "y": 1140, "wires": []
   }
 ]

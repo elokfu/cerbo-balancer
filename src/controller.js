@@ -255,9 +255,12 @@ function createBalancerController (options = {}) {
     const selected = selectedBattery()
     history.push({
       timestamp,
+      batteryCurrent: telemetry && finite(telemetry.packCurrent) ? telemetry.packCurrent : null,
       selectedCurrent: selected && finite(selected.current) ? selected.current : null,
       selectedVmax: selected ? selectedVmax(selected) : null,
       selectedVmin: selected && (selected.effectiveCells || selected.cells) ? Math.min(...(selected.effectiveCells || selected.cells).map(cell => finite(cell.voltage) ? cell.voltage : cell)) : null,
+      globalVmax: finite(globalVmax()) ? globalVmax() : null,
+      globalVmin: finite(globalVmin()) ? globalVmin() : null,
       globalSpread: finite(globalVmax()) && finite(globalVmin()) ? globalVmax() - globalVmin() : null,
       selectedSpread: selected && finite(selected.cellSpread) ? selected.cellSpread : null,
       ccl: ccl(),

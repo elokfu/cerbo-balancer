@@ -284,6 +284,10 @@ class DynessServiceTests(unittest.TestCase):
             self.assertEqual(store.read_json("cerbo-balancer-config.json")["mode"], "TEST")
 
     def test_csv_schema_is_fixed_to_start_inventory_and_stops_on_missing_battery(self):
+        self.assertEqual(service.CsvLogger._format_voltage(3343), "3.34")
+        self.assertEqual(service.CsvLogger._format_voltage(3.335), "3.33")
+        self.assertEqual(service.CsvLogger._format_spread_mv(0.007999999), "8")
+
         def snapshot(addresses, timestamp=1_700_000_000_000, valid=True):
             return {
                 "timestamp": timestamp,

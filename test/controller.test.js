@@ -16,7 +16,7 @@ function battery (overrides = {}) {
 function telemetry (overrides = {}) {
   return {
     timestamp: clock, valid: true, cellTelemetryValid: true, soc: 99, vmax: 3.455, vmin: 3.42,
-    ccl: 20, cvl: 56.5, limits: { statusFlags: { chargeEnabled: true, dischargeEnabled: true } },
+    ccl: 20, cvl: 56.5, packCurrent: 1.5, limits: { statusFlags: { chargeEnabled: true, dischargeEnabled: true } },
     batteries: [battery()], expectedBatteries: [2], ...overrides
   }
 }
@@ -69,6 +69,11 @@ noStart.handle({ type: 'telemetry', timestamp: clock, telemetry: telemetry({ soc
 noStart.handle({ type: 'set_output_ready', value: true, timestamp: clock })
 noStart.handle({ type: 'set_enabled', value: true, timestamp: clock })
 assert.equal(noStart.getState().state, STATES.NORMAL)
+const independentHistory = noStart.getStatus().history
+assert.equal(independentHistory.at(-1).batteryCurrent, 1.5)
+assert.equal(independentHistory.at(-1).globalVmax, 3.455)
+assert.equal(independentHistory.at(-1).globalVmin, 3.42)
+assert.ok(Math.abs(independentHistory.at(-1).globalSpread - 0.035) < 1e-12)
 
 const testMode = createBalancerController({ now: () => clock })
 testMode.handle({ type: 'telemetry', timestamp: clock, telemetry: telemetry() })
