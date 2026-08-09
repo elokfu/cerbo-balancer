@@ -7,6 +7,11 @@ accepts a fresh complete telemetry sample for up to 15 seconds, allowing a
 complete three-battery polling cycle and a bounded delayed retry without a
 false stale-telemetry fault.
 
+The dashboard reconnects automatically after a page reload or short network
+interruption. The shared Dashboard configuration suppresses the transient
+`Connection Lost` toast caused by the old page's socket closing during a
+normal reload; it does not disable reconnect or telemetry safety handling.
+
 The maintenance view exposes CID2 `0x61` system voltage/SOC and validated BMS
 temperature range, CID2 `0x63` limits and permission/state bits, responding addresses, per-battery voltage and signed
 current, per-battery and all-pack cell spread, cell voltages, voltage sums and

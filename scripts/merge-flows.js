@@ -13,6 +13,9 @@ const existing = JSON.parse(fs.readFileSync(existingPath, 'utf8'))
 const addition = JSON.parse(fs.readFileSync(additionPath, 'utf8'))
 const sharedConfiguration = new Set(['ui-base', 'ui-theme', 'victron-client'])
 const obsoleteNodeIds = new Set(['bal-rs485-service', 'bal-rs485-start'])
+const sharedUiBaseOverrides = {
+  showDisconnectNotification: false
+}
 
 // A previous merge can leave retired balancer nodes behind because Node-RED's
 // flow export is an additive document.  Remove only the explicitly retired
@@ -28,11 +31,19 @@ for (const node of existing) {
 const byId = new Map(merged.map(node => [node.id, node]))
 
 for (const node of addition) {
+  if (node.type === 'ui-base' && byId.has(node.id)) {
+    Object.assign(byId.get(node.id), sharedUiBaseOverrides)
+    continue
+  }
   if (sharedConfiguration.has(node.type) && byId.has(node.id)) continue
   const previous = byId.get(node.id)
   if (previous) merged[merged.indexOf(previous)] = node
   else merged.push(node)
   byId.set(node.id, node)
+}
+
+for (const node of merged) {
+  if (node.type === 'ui-base') Object.assign(node, sharedUiBaseOverrides)
 }
 
 process.stdout.write(`${JSON.stringify(merged, null, 4)}\n`)
