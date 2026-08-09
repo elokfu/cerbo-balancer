@@ -617,5 +617,35 @@
     "x": 180,
     "y": 480,
     "wires": [["bal-rs485-read"]]
+  },
+  {
+    "id": "bal-logs-page", "type": "ui-page", "name": "Balancer CSV Logs", "ui": "93f5777d13b8710a", "path": "/balancer-logs", "icon": "download", "layout": "grid", "theme": "2f1c77dc3fd27bf0", "breakpoints": [{"name":"Default","px":0,"cols":3},{"name":"Desktop","px":1024,"cols":12}], "order": 5, "className": "", "visible": "true", "disabled": "false"
+  },
+  {
+    "id": "bal-logs-group", "type": "ui-group", "name": "CSV download library", "page": "bal-logs-page", "width": 12, "height": 10, "order": 1, "showTitle": true, "className": "", "visible": true, "disabled": false, "groupType": "default"
+  },
+  {
+    "id": "bal-logs-refresh", "type": "inject", "z": "bal-tab", "name": "Refresh CSV log library", "props": [{"p":"payload"}], "repeat": "5", "once": true, "onceDelay": "1", "topic": "", "payload": "", "payloadType": "str", "x": 190, "y": 1020, "wires": [["bal-logs-list"]]
+  },
+  {
+    "id": "bal-logs-list", "type": "exec", "z": "bal-tab", "command": "find /data/home/nodered/cerbo-balancer-csv -maxdepth 1 -type f -name '*.csv' -printf '%f|%s|%TY-%Tm-%Td %TH:%TM\\n' 2>/dev/null", "addpay": false, "append": "", "useSpawn": "false", "timer": "", "winHide": false, "name": "List CSV logs", "x": 450, "y": 1020, "wires": [["bal-logs-format"], [], []]
+  },
+  {
+    "id": "bal-logs-format", "type": "function", "z": "bal-tab", "name": "Format CSV log library", "func": "msg.payload = String(msg.payload || '').trim().split('\\n').filter(Boolean).map(line => { const [name,size,modified] = line.split('|'); return { name, size, modified, href: '/balancer-csv-download?name=' + encodeURIComponent(name) }; }); return msg;", "outputs": 1, "x": 700, "y": 1020, "wires": [["bal-logs-view"]]
+  },
+  {
+    "id": "bal-logs-view", "type": "ui-template", "z": "bal-tab", "group": "bal-logs-group", "page": "", "ui": "", "name": "CSV log library", "order": 1, "width": 12, "height": 10, "head": "", "format": "<template><div><p>CSV sessions stored on the Cerbo. Select a file to download.</p><table><thead><tr><th>Filename</th><th>Modified</th><th>Size</th><th></th></tr></thead><tbody><tr v-for=\"f in (msg?.payload || [])\" :key=\"f.name\"><td>{{f.name}}</td><td>{{f.modified}}</td><td>{{f.size}} bytes</td><td><a :href=\"f.href\">Download</a></td></tr></tbody></table><p v-if=\"!(msg?.payload || []).length\">No CSV files yet.</p></div></template><style>table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid #ddd}</style>", "storeOutMessages": true, "passthru": false, "resendOnRefresh": true, "templateScope": "local", "className": "", "x": 970, "y": 1020, "wires": [[]]
+  },
+  {
+    "id": "bal-csv-download", "type": "http in", "z": "bal-tab", "name": "CSV download", "url": "/balancer-csv-download", "method": "get", "upload": false, "swaggerDoc": "", "x": 190, "y": 1080, "wires": [["bal-csv-download-path"]]
+  },
+  {
+    "id": "bal-csv-download-path", "type": "function", "z": "bal-tab", "name": "Validate CSV download path", "func": "const name = msg.req?.query?.name; if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,80}\\.csv$/.test(name)) { msg.statusCode=400; msg.payload='Invalid CSV filename'; return [null,msg]; } msg.filename='/data/home/nodered/cerbo-balancer-csv/'+name; msg.headers={'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename=\"'+name+'\"'}; return [msg,null];", "outputs": 2, "x": 460, "y": 1080, "wires": [["bal-csv-download-file"], ["bal-csv-download-response"]]
+  },
+  {
+    "id": "bal-csv-download-file", "type": "file in", "z": "bal-tab", "name": "Read CSV download", "filename": "filename", "filenameType": "msg", "format": "", "chunk": false, "sendError": true, "encoding": "none", "allProps": false, "x": 700, "y": 1080, "wires": [["bal-csv-download-response"]]
+  },
+  {
+    "id": "bal-csv-download-response", "type": "http response", "z": "bal-tab", "name": "Send CSV download", "statusCode": "", "headers": {}, "x": 970, "y": 1080, "wires": []
   }
 ]
