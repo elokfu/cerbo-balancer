@@ -142,8 +142,10 @@ class JsonlStore:
 class CsvLogger:
     summary_columns = [
         "timestamp", "sample_number", "system_voltage_v", "soc_percent", "bms_temperature_c",
-        "vmin_v", "vmax_v", "spread_mv", "battery_current_a", "ccl_a",
-        "dcl_a", "charge_enabled", "discharge_enabled",
+        "vmin_v", "vmax_v", "spread_mv", "battery_current_a",
+    ]
+    control_columns = [
+        "ccl_a", "dcl_a", "charge_enabled", "discharge_enabled",
         "controller_requested_voltage_v", "controller_requested_current_a",
         "controller_charge_enabled", "controller_command_reason",
         "controller_command_fresh", "controller_command_age_s",
@@ -174,11 +176,12 @@ class CsvLogger:
 
     @classmethod
     def columns_for(cls, addresses: tuple[int, ...]) -> list[str]:
-        return cls.summary_columns + [
+        battery_columns = [
             f"battery_{address:02d}_{field}"
             for address in addresses
             for field in cls.battery_fields
         ]
+        return cls.summary_columns + battery_columns + cls.control_columns
 
     @staticmethod
     def _addresses_from_snapshot(snapshot: dict[str, Any]) -> tuple[int, ...]:
@@ -222,7 +225,7 @@ class CsvLogger:
     @staticmethod
     def _format_cell_voltage(value: Any) -> str:
         """Return a cell voltage in volts with a fixed three decimals."""
-        return CsvLogger._format_voltage(value, 3, millivolt_threshold=10)
+        return CsvLogger._format_voltage(value, 3, millivolt_threshold=100)
 
     @staticmethod
     def _format_voltage(value: Any, decimals: int = 2, millivolt_threshold: float = 100) -> str:
@@ -314,8 +317,8 @@ class CsvLogger:
             "system_voltage_v": self._format_voltage(system.get("voltage61")),
             "soc_percent": self._format_number(system.get("soc61")),
             "bms_temperature_c": self._format_number(system.get("maximumBmsTemperature61")),
-            "vmin_v": self._format_voltage(aggregate.get("vmin")),
-            "vmax_v": self._format_voltage(aggregate.get("vmax")),
+            "vmin_v": self._format_voltage(aggregate.get("vmin"), 3),
+            "vmax_v": self._format_voltage(aggregate.get("vmax"), 3),
             "spread_mv": self._format_spread_mv(aggregate.get("spread")),
             "battery_current_a": self._format_number(aggregate.get("summedBatteryCurrent")),
             "ccl_a": self._format_number(limits.get("chargeCurrent")),
@@ -353,7 +356,7 @@ class CsvLogger:
             for index, value in enumerate(battery.get("temperatures") or [], 1): row[prefix + f"temp_{index:02d}_c"] = value
         with target.open("a", newline="", encoding="utf-8") as stream:
             if not exists:
-                stream.write(f"# schema_version=8\n# serial_port={snapshot.get('serialPort')}\n# baud={snapshot.get('baud')}\n# poll_interval_seconds=6\n# timestamp_format=HH:MM:SS {self.timezone_name}\n# virtual_bms_service=com.victronenergy.battery.rs485_dyness\n# virtual_bms_device_instance=100\n# dvcc_output_mode=TEST/shadow\n# initial_addresses={','.join(str(address) for address in self.initial_addresses)}\n")
+                stream.write(f"# schema_version=9\n# serial_port={snapshot.get('serialPort')}\n# baud={snapshot.get('baud')}\n# poll_interval_seconds=6\n# timestamp_format=HH:MM:SS {self.timezone_name}\n# virtual_bms_service=com.victronenergy.battery.rs485_dyness\n# virtual_bms_device_instance=100\n# dvcc_output_mode=TEST/shadow\n# initial_addresses={','.join(str(address) for address in self.initial_addresses)}\n")
                 csv.DictWriter(stream, fieldnames=columns).writeheader()
             csv.DictWriter(stream, fieldnames=columns).writerow(row)
         self.next_sample_number += 1

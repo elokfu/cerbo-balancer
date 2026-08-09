@@ -409,7 +409,11 @@ class DynessServiceTests(unittest.TestCase):
         self.assertEqual(service.CsvLogger._format_voltage(53.25), "53.25")
         self.assertEqual(service.CsvLogger._format_cell_voltage(3343), "3.343")
         self.assertEqual(service.CsvLogger._format_voltage(3.335), "3.33")
+        self.assertEqual(service.CsvLogger._format_voltage(3.335, 3), "3.335")
         self.assertEqual(service.CsvLogger._format_spread_mv(0.007999999), "8")
+        columns = service.CsvLogger.columns_for((2,))
+        self.assertLess(columns.index("battery_02_cell_01_v"), columns.index("ccl_a"))
+        self.assertLess(columns.index("battery_02_temp_05_c"), columns.index("controller_requested_voltage_v"))
 
         def snapshot(addresses, timestamp=1_700_000_000_000, valid=True):
             return {
@@ -454,11 +458,17 @@ class DynessServiceTests(unittest.TestCase):
             self.assertIn("battery_02_temp_05_c", header)
             self.assertNotIn("battery_02_temp_06_c", header)
             self.assertIn("timestamp,sample_number,", header)
+            self.assertIn("vmin_v,vmax_v,spread_mv", header)
             rows = [line for line in lines if line and not line.startswith("#")]
             self.assertEqual(len(rows), 3)
             self.assertRegex(rows[1].split(",", 2)[0], r"^\d{2}:\d{2}:\d{2}$")
             self.assertEqual(rows[2].split(",", 2)[1], "2")
             self.assertIn(",3.317,3.329,", rows[1])
+            self.assertIn(",3.317,3.329,", rows[2])
+            csv_rows = list(csv.DictReader(line for line in rows))
+            self.assertEqual(csv_rows[0]["vmin_v"], "3.317")
+            self.assertEqual(csv_rows[0]["vmax_v"], "3.329")
+            self.assertEqual(csv_rows[0]["battery_02_cell_01_v"], "3.317")
 
 
 if __name__ == "__main__":

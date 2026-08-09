@@ -99,10 +99,12 @@ The CSV header contains the constant serial metadata, virtual-BMS identity,
 shadow-mode marker, and initial battery addresses. Each battery contributes 16
 cell-voltage fields and five temperature fields. Cell voltages are always
 written in volts with three decimal places. Pack voltages, temperatures,
-currents, and spreads are written with two decimal places, while spreads are
-whole millivolts. The summary columns also record the controller-requested
-CVL/CCL/charge state and the final virtual-BMS effective CVL/CCL/DCL,
-permissions, thermal factor, command freshness, and arbitration reason. Each data row uses local Cerbo time as
+currents, and spreads are written with two decimal places, except pack Vmin/Vmax
+which use three decimal places; spreads are whole millivolts. Per-battery
+columns precede the raw BMS and controller-arbitration columns. The trailing
+control columns record the controller-requested CVL/CCL/charge state and the
+final virtual-BMS effective CVL/CCL/DCL, permissions, thermal factor, command
+freshness, and arbitration reason. Each data row uses local Cerbo time as
 `HH:MM:SS` in the configured `CERBO_BALANCER_TIMEZONE` (default
 `Europe/Berlin`) and includes a monotonic `sample_number`, so recordings longer than
 24 hours remain unambiguous without storing a calendar date.
