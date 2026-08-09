@@ -17,8 +17,10 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 try:
     import serial  # type: ignore
@@ -56,6 +58,21 @@ DISCOVERY_QUERY_TIMEOUT = 0.12
 
 def now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def cerbo_timezone() -> tuple[str, Any]:
+    """Read the Cerbo-configured timezone from Victron Settings D-Bus."""
+    try:
+        import dbus  # type: ignore
+
+        bus = dbus.SystemBus()
+        item = bus.get_object("com.victronenergy.settings", "/Settings/System/TimeZone")
+        value = item.GetValue(dbus_interface="com.victronenergy.BusItem")
+        name = str(value)
+        return name, ZoneInfo(name)
+    except (ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError):
+        local_timezone = datetime.now().astimezone().tzinfo
+        return "system-local", local_timezone
 
 
 def default_serial_health() -> dict[str, Any]:
@@ -138,6 +155,7 @@ class CsvLogger:
     def __init__(self, root: str):
         self.directory = Path(root) / CSV_LOG_DIRECTORY
         self.directory.mkdir(parents=True, exist_ok=True)
+        self.timezone_name, self.timezone = cerbo_timezone()
         self.active_filename: str | None = None
         self.initial_addresses: tuple[int, ...] | None = None
         self.stopped = False
@@ -193,15 +211,15 @@ class CsvLogger:
     @staticmethod
     def _format_cell_voltage(value: Any) -> str:
         """Return a cell voltage in volts with a fixed three decimals."""
-        return CsvLogger._format_voltage(value, 3)
+        return CsvLogger._format_voltage(value, 3, millivolt_threshold=10)
 
     @staticmethod
-    def _format_voltage(value: Any, decimals: int = 2) -> str:
+    def _format_voltage(value: Any, decimals: int = 2, millivolt_threshold: float = 100) -> str:
         """Normalize volts or millivolts and format a voltage value."""
         if not isinstance(value, (int, float)):
             return ""
         voltage = float(value)
-        if abs(voltage) > 10:
+        if abs(voltage) > millivolt_threshold:
             voltage /= 1000.0
         return f"{voltage:.{decimals}f}"
 
@@ -217,6 +235,11 @@ class CsvLogger:
             return ""
         spread_mv = float(value) * 1000 if abs(float(value)) < 1 else float(value)
         return f"{spread_mv:.0f}"
+
+    def _format_timestamp(self, value: Any) -> str:
+        if not isinstance(value, (int, float)):
+            return ""
+        return datetime.fromtimestamp(value / 1000, self.timezone).strftime("%H:%M:%S")
 
     def write(self, snapshot: dict[str, Any], control: dict[str, Any] | None) -> dict[str, Any]:
         if not control or control.get("enabled") is not True:
@@ -266,10 +289,7 @@ class CsvLogger:
         system, limits, aggregate = snapshot.get("system") or {}, snapshot.get("limits") or {}, snapshot.get("aggregate") or {}
         row = {column: "" for column in columns}
         timestamp = snapshot.get("timestamp")
-        readable_timestamp = (
-            time.strftime("%H:%M:%S", time.localtime(timestamp / 1000))
-            if isinstance(timestamp, (int, float)) else ""
-        )
+        readable_timestamp = self._format_timestamp(timestamp)
         row.update({"timestamp": readable_timestamp, "sample_number": self.next_sample_number, "system_voltage_v": self._format_voltage(system.get("voltage61")), "soc_percent": self._format_number(system.get("soc61")), "bms_temperature_c": self._format_number(system.get("maximumBmsTemperature61")), "vmin_v": self._format_voltage(aggregate.get("vmin")), "vmax_v": self._format_voltage(aggregate.get("vmax")), "spread_mv": self._format_spread_mv(aggregate.get("spread")), "battery_current_a": self._format_number(aggregate.get("summedBatteryCurrent")), "ccl_a": self._format_number(limits.get("chargeCurrent")), "dcl_a": self._format_number(limits.get("dischargeCurrentSigned")), "charge_enabled": (limits.get("statusFlags") or {}).get("chargeEnabled"), "discharge_enabled": (limits.get("statusFlags") or {}).get("dischargeEnabled")})
         for battery in snapshot.get("batteries") or []:
             address = int(battery.get("address"))
@@ -282,7 +302,7 @@ class CsvLogger:
             for index, value in enumerate(battery.get("temperatures") or [], 1): row[prefix + f"temp_{index:02d}_c"] = value
         with target.open("a", newline="", encoding="utf-8") as stream:
             if not exists:
-                stream.write(f"# schema_version=5\n# serial_port={snapshot.get('serialPort')}\n# baud={snapshot.get('baud')}\n# poll_interval_seconds=6\n# timestamp_format=HH:MM:SS local Cerbo time\n# initial_addresses={','.join(str(address) for address in self.initial_addresses)}\n")
+                stream.write(f"# schema_version=7\n# serial_port={snapshot.get('serialPort')}\n# baud={snapshot.get('baud')}\n# poll_interval_seconds=6\n# timestamp_format=HH:MM:SS {self.timezone_name}\n# initial_addresses={','.join(str(address) for address in self.initial_addresses)}\n")
                 csv.DictWriter(stream, fieldnames=columns).writeheader()
             csv.DictWriter(stream, fieldnames=columns).writerow(row)
         self.next_sample_number += 1

@@ -285,6 +285,8 @@ class DynessServiceTests(unittest.TestCase):
 
     def test_csv_schema_is_fixed_to_start_inventory_and_stops_on_missing_battery(self):
         self.assertEqual(service.CsvLogger._format_voltage(3343), "3.34")
+        self.assertEqual(service.CsvLogger._format_voltage(53.25), "53.25")
+        self.assertEqual(service.CsvLogger._format_cell_voltage(3343), "3.343")
         self.assertEqual(service.CsvLogger._format_voltage(3.335), "3.33")
         self.assertEqual(service.CsvLogger._format_spread_mv(0.007999999), "8")
 
@@ -310,6 +312,7 @@ class DynessServiceTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             logger = service.CsvLogger(directory)
+            self.assertRegex(logger._format_timestamp(0), r"^\d{2}:\d{2}:\d{2}$")
             control = {"enabled": True, "filename": "session.csv"}
             first = logger.write(snapshot([2, 3]), control)
             second = logger.write(snapshot([2, 3, 4], 1_700_000_006_000), control)
