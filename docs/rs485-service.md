@@ -85,3 +85,17 @@ For a Cerbo installation, copy both Python files in `scripts/` to the runtime
 directory, install the runit files from `deploy/`, and let the root-supervised
 service own the serial adapter. The generated Node-RED flow reads the latest
 JSON snapshot for the maintenance page; it does not start the Python service.
+
+## CSV session logging
+
+CSV logging is controlled from the balancer page and writes files below
+`/data/home/nodered/cerbo-balancer-csv/`. When a file is first created, its
+schema is fixed from the active battery inventory at that moment. Batteries
+discovered later are ignored and do not add columns. If any battery in the
+initial inventory is absent from a later sample, the service stops that
+recording session rather than writing partial rows.
+
+The CSV header contains the constant serial metadata and initial battery
+addresses. Each data row uses local Cerbo time as `HH:MM:SS` and includes a
+monotonic `sample_number`, so recordings longer than 24 hours remain
+unambiguous without storing a calendar date.

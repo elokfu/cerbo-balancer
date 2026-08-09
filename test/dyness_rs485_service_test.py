@@ -283,6 +283,49 @@ class DynessServiceTests(unittest.TestCase):
             store.ensure_json("cerbo-balancer-config.json", {"mode": "TEST"})
             self.assertEqual(store.read_json("cerbo-balancer-config.json")["mode"], "TEST")
 
+    def test_csv_schema_is_fixed_to_start_inventory_and_stops_on_missing_battery(self):
+        def snapshot(addresses, timestamp=1_700_000_000_000, valid=True):
+            return {
+                "timestamp": timestamp,
+                "valid": valid,
+                "serialPort": "/dev/ttyUSB0",
+                "baud": 115200,
+                "inventory": {"activeAddresses": list(addresses)},
+                "system": {"voltage61": 53.25, "soc61": 98},
+                "limits": {"chargeCurrent": 56.0, "dischargeCurrentSigned": -198.8,
+                           "statusFlags": {"chargeEnabled": True, "dischargeEnabled": True}},
+                "aggregate": {"vmin": 3.317, "vmax": 3.329, "spread": 0.012,
+                              "summedBatteryCurrent": 1.5},
+                "batteries": [{"address": address, "valid": True, "voltage": 53.25,
+                               "current": 1.5, "effectiveCells": [], "temperatures": []}
+                              for address in addresses],
+            }
+
+        with tempfile.TemporaryDirectory() as directory:
+            logger = service.CsvLogger(directory)
+            control = {"enabled": True, "filename": "session.csv"}
+            first = logger.write(snapshot([2, 3]), control)
+            second = logger.write(snapshot([2, 3, 4], 1_700_000_006_000), control)
+            stopped = logger.write(snapshot([2], 1_700_000_012_000, valid=False), control)
+            after_stop = logger.write(snapshot([2, 3], 1_700_000_018_000), control)
+            target = Path(directory) / service.CSV_LOG_DIRECTORY / "session.csv"
+            lines = target.read_text(encoding="utf-8").splitlines()
+
+            self.assertTrue(first["written"])
+            self.assertTrue(second["written"])
+            self.assertTrue(stopped["stopped"])
+            self.assertTrue(after_stop["stopped"])
+            self.assertIn("# initial_addresses=2,3", lines)
+            header = next(line for line in lines if not line.startswith("#"))
+            self.assertIn("battery_02_voltage_v", header)
+            self.assertIn("battery_03_voltage_v", header)
+            self.assertNotIn("battery_04_voltage_v", header)
+            self.assertIn("timestamp,sample_number,", header)
+            rows = [line for line in lines if line and not line.startswith("#")]
+            self.assertEqual(len(rows), 3)
+            self.assertRegex(rows[1].split(",", 2)[0], r"^\d{2}:\d{2}:\d{2}$")
+            self.assertEqual(rows[2].split(",", 2)[1], "2")
+
 
 if __name__ == "__main__":
     unittest.main()

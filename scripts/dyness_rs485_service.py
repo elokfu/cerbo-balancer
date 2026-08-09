@@ -123,39 +123,142 @@ class JsonlStore:
 
 
 class CsvLogger:
-    columns = ["timestamp", "system_voltage_v", "soc_percent", "bms_temperature_c", "vmin_v", "vmax_v", "spread_mv", "battery_current_a", "ccl_a", "dcl_a", "charge_enabled", "discharge_enabled"] + [f"battery_{address:02d}_{field}" for address in EXPECTED_ADDRESSES for field in (["present", "valid", "voltage_v", "current_a", "status1", "status2", "status3", "status4", "status5"] + [f"cell_{index:02d}_v" for index in range(1, 17)] + [f"temp_{index:02d}_c" for index in range(1, 33)])]
+    summary_columns = [
+        "timestamp", "sample_number", "system_voltage_v", "soc_percent", "bms_temperature_c",
+        "vmin_v", "vmax_v", "spread_mv", "battery_current_a", "ccl_a",
+        "dcl_a", "charge_enabled", "discharge_enabled",
+    ]
+    battery_fields = [
+        "present", "valid", "voltage_v", "current_a", "status1", "status2",
+        "status3", "status4", "status5",
+        *[f"cell_{index:02d}_v" for index in range(1, 17)],
+        *[f"temp_{index:02d}_c" for index in range(1, 33)],
+    ]
 
     def __init__(self, root: str):
         self.directory = Path(root) / CSV_LOG_DIRECTORY
         self.directory.mkdir(parents=True, exist_ok=True)
+        self.active_filename: str | None = None
+        self.initial_addresses: tuple[int, ...] | None = None
+        self.stopped = False
+        self.next_sample_number = 1
 
-    def write(self, snapshot: dict[str, Any], control: dict[str, Any] | None) -> None:
-        if not control or control.get("enabled") is not True or not snapshot.get("valid"):
-            return
+    @classmethod
+    def columns_for(cls, addresses: tuple[int, ...]) -> list[str]:
+        return cls.summary_columns + [
+            f"battery_{address:02d}_{field}"
+            for address in addresses
+            for field in cls.battery_fields
+        ]
+
+    @staticmethod
+    def _addresses_from_snapshot(snapshot: dict[str, Any]) -> tuple[int, ...]:
+        inventory = snapshot.get("inventory") or {}
+        addresses = inventory.get("activeAddresses")
+        if not isinstance(addresses, list):
+            addresses = [battery.get("address") for battery in snapshot.get("batteries") or []]
+        valid = sorted({int(address) for address in addresses if isinstance(address, int)})
+        return tuple(address for address in valid if 2 <= address <= 255)
+
+    def _read_existing_session(self, target: Path) -> tuple[tuple[int, ...] | None, int]:
+        addresses: tuple[int, ...] | None = None
+        sample_count = 0
+        try:
+            with target.open("r", encoding="utf-8") as stream:
+                data_lines: list[str] = []
+                for line in stream:
+                    if line.startswith("# initial_addresses="):
+                        raw = line.partition("=")[2].strip()
+                        addresses = tuple(sorted({
+                            int(item) for item in raw.split(",")
+                            if item.strip().isdigit() and 2 <= int(item) <= 255
+                        }))
+                    elif line and not line.startswith("#"):
+                        data_lines.append(line)
+                if len(data_lines) > 1:
+                    reader = csv.DictReader(data_lines)
+                    for row in reader:
+                        try:
+                            sample_count = max(sample_count, int(row.get("sample_number", "0")))
+                        except (TypeError, ValueError):
+                            sample_count += 1
+        except OSError:
+            return None, 0
+        return addresses, sample_count
+
+    def _stop(self, filename: str, reason: str) -> dict[str, Any]:
+        self.stopped = True
+        return {"stopped": True, "filename": filename, "reason": reason}
+
+    def write(self, snapshot: dict[str, Any], control: dict[str, Any] | None) -> dict[str, Any]:
+        if not control or control.get("enabled") is not True:
+            self.active_filename = None
+            self.initial_addresses = None
+            self.stopped = False
+            self.next_sample_number = 1
+            return {"written": False}
         name = control.get("filename")
         if not isinstance(name, str) or not name.endswith(".csv") or "/" in name or "\\" in name or name != Path(name).name:
-            return
+            return {"written": False}
+        if name != self.active_filename:
+            self.active_filename = name
+            self.initial_addresses = None
+            self.stopped = False
+            self.next_sample_number = 1
         target = self.directory / name
         exists = target.exists()
+        if self.initial_addresses is None and exists:
+            self.initial_addresses, sample_count = self._read_existing_session(target)
+            self.next_sample_number = sample_count + 1
+        if self.stopped:
+            return {"written": False, "stopped": True, "filename": name,
+                    "reason": "battery disappeared during CSV recording"}
+        if self.initial_addresses is None:
+            if not snapshot.get("valid"):
+                return {"written": False}
+            self.initial_addresses = self._addresses_from_snapshot(snapshot)
+            if not self.initial_addresses:
+                return {"written": False}
+        current_addresses = {
+            int(battery.get("address"))
+            for battery in snapshot.get("batteries") or []
+            if isinstance(battery.get("address"), int)
+        }
+        missing = sorted(set(self.initial_addresses) - current_addresses)
+        if missing:
+            return self._stop(name, f"battery disappeared during CSV recording: {missing}")
+        if not snapshot.get("valid"):
+            return {"written": False}
+        columns = self.columns_for(self.initial_addresses)
         if exists:
             with target.open("r", encoding="utf-8") as stream:
                 header = next((line.rstrip("\n") for line in stream if not line.startswith("#")), "")
-            if header != ",".join(self.columns):
-                return
+            if header != ",".join(columns):
+                return {"written": False}
         system, limits, aggregate = snapshot.get("system") or {}, snapshot.get("limits") or {}, snapshot.get("aggregate") or {}
-        row = {column: "" for column in self.columns}
-        row.update({"timestamp": snapshot.get("timestamp"), "system_voltage_v": system.get("voltage61"), "soc_percent": system.get("soc61"), "bms_temperature_c": system.get("maximumBmsTemperature61"), "vmin_v": aggregate.get("vmin"), "vmax_v": aggregate.get("vmax"), "spread_mv": aggregate.get("spread", 0) * 1000 if isinstance(aggregate.get("spread"), (int, float)) else None, "battery_current_a": aggregate.get("summedBatteryCurrent"), "ccl_a": limits.get("chargeCurrent"), "dcl_a": limits.get("dischargeCurrentSigned"), "charge_enabled": (limits.get("statusFlags") or {}).get("chargeEnabled"), "discharge_enabled": (limits.get("statusFlags") or {}).get("dischargeEnabled")})
+        row = {column: "" for column in columns}
+        timestamp = snapshot.get("timestamp")
+        readable_timestamp = (
+            time.strftime("%H:%M:%S", time.localtime(timestamp / 1000))
+            if isinstance(timestamp, (int, float)) else ""
+        )
+        row.update({"timestamp": readable_timestamp, "sample_number": self.next_sample_number, "system_voltage_v": system.get("voltage61"), "soc_percent": system.get("soc61"), "bms_temperature_c": system.get("maximumBmsTemperature61"), "vmin_v": aggregate.get("vmin"), "vmax_v": aggregate.get("vmax"), "spread_mv": aggregate.get("spread", 0) * 1000 if isinstance(aggregate.get("spread"), (int, float)) else None, "battery_current_a": aggregate.get("summedBatteryCurrent"), "ccl_a": limits.get("chargeCurrent"), "dcl_a": limits.get("dischargeCurrentSigned"), "charge_enabled": (limits.get("statusFlags") or {}).get("chargeEnabled"), "discharge_enabled": (limits.get("statusFlags") or {}).get("dischargeEnabled")})
         for battery in snapshot.get("batteries") or []:
-            prefix = f"battery_{int(battery.get('address')):02d}_"; row[prefix + "present"] = True; row[prefix + "valid"] = battery.get("valid"); row[prefix + "voltage_v"] = battery.get("voltage"); row[prefix + "current_a"] = battery.get("current")
+            address = int(battery.get("address"))
+            if address not in self.initial_addresses:
+                continue
+            prefix = f"battery_{address:02d}_"; row[prefix + "present"] = True; row[prefix + "valid"] = battery.get("valid"); row[prefix + "voltage_v"] = battery.get("voltage"); row[prefix + "current_a"] = battery.get("current")
             status = battery.get("status44") or {}
             for index in range(1, 6): row[prefix + f"status{index}"] = (status.get(f"status{index}") or {}).get("raw")
             for cell in battery.get("effectiveCells") or []: row[prefix + f"cell_{int(cell.get('index')):02d}_v"] = cell.get("voltage")
             for index, value in enumerate(battery.get("temperatures") or [], 1): row[prefix + f"temp_{index:02d}_c"] = value
         with target.open("a", newline="", encoding="utf-8") as stream:
             if not exists:
-                stream.write(f"# schema_version=1\n# serial_port={snapshot.get('serialPort')}\n# baud={snapshot.get('baud')}\n# poll_interval_seconds=6\n")
-                csv.DictWriter(stream, fieldnames=self.columns).writeheader()
-            csv.DictWriter(stream, fieldnames=self.columns).writerow(row)
+                stream.write(f"# schema_version=3\n# serial_port={snapshot.get('serialPort')}\n# baud={snapshot.get('baud')}\n# poll_interval_seconds=6\n# timestamp_format=HH:MM:SS local Cerbo time\n# initial_addresses={','.join(str(address) for address in self.initial_addresses)}\n")
+                csv.DictWriter(stream, fieldnames=columns).writeheader()
+            csv.DictWriter(stream, fieldnames=columns).writerow(row)
+        self.next_sample_number += 1
+        return {"written": True, "filename": name, "initialAddresses": list(self.initial_addresses)}
 
 
 def thermal_factor(snapshot: dict[str, Any]) -> float:
