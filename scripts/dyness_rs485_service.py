@@ -44,6 +44,7 @@ SUMMARY_LOG_NAME = "cerbo-balancer-summary.jsonl"
 DETAILED_RETENTION_MS = 24 * 60 * 60 * 1000
 SUMMARY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 SUMMARY_INTERVAL_MS = 60 * 1000
+COMMAND_FRESHNESS_MS = 20 * 1000
 EXPECTED_ADDRESSES = tuple(range(2, 17))
 NORMAL_DISCOVERY_INTERVAL = 60.0
 RECOVERY_DISCOVERY_INTERVAL = 10.0
@@ -672,7 +673,10 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
     if discharge_blocked:
         bms_dcl = 0.0
     command_age = now_ms() - command["timestamp"] if command and isinstance(command.get("timestamp"), (int, float)) else None
-    fresh_command = bool(command_age is not None and 0 <= command_age <= 5000)
+    # The poller reads the command at the start of each eight-second cycle,
+    # before Node-RED can react to the snapshot produced by that same cycle.
+    # Two complete cycles therefore fit inside the command validity budget.
+    fresh_command = bool(command_age is not None and 0 <= command_age <= COMMAND_FRESHNESS_MS)
     requested_voltage = float(command.get("requestedVoltage", 55.2)) if fresh_command else 55.2
     requested_current = float(command.get("requestedCurrent", 100.0)) if fresh_command else 100.0
     controller_charge_enabled = bool(command.get("chargeEnabled", True)) if fresh_command else True
@@ -1354,8 +1358,12 @@ class DbusPublisher:
         if not self.available:
             return active_bms_selection({})
         try:
-            values = self.system_root.GetValue(dbus_interface="com.victronenergy.BusItem")
-            normalized = {str(key): value for key, value in dict(values).items()}
+            normalized = {}
+            for key in ("ActiveBatteryService", "ActiveBmsService", "ActiveBmsInstance"):
+                item = self.bus.get_object("com.victronenergy.system", f"/{key}")
+                normalized[key] = item.GetValue(
+                    dbus_interface="com.victronenergy.BusItem"
+                )
             return active_bms_selection(normalized)
         except Exception:
             return active_bms_selection({})

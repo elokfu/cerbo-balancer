@@ -435,6 +435,27 @@ class DynessServiceTests(unittest.TestCase):
         self.assertEqual(result["effectiveChargeVoltage"], 56.4)
         self.assertEqual(result["effectiveChargeCurrent"], 28.0)
 
+    def test_eight_second_previous_cycle_command_remains_fresh(self):
+        snapshot = {
+            "valid": True,
+            "batteries": [{"temperatures": [25.0]}],
+            "limits": {
+                "chargeVoltage": 56.5, "chargeCurrent": 56.0,
+                "dischargeCurrentSigned": -198.8,
+                "statusFlags": {"chargeEnabled": True, "dischargeEnabled": True},
+            },
+        }
+        command = {
+            "mode": "ACTIVE", "timestamp": 992000,
+            "requestedVoltage": 56.0, "requestedCurrent": 12.0,
+            "chargeEnabled": True,
+        }
+        with patch.object(service, "now_ms", return_value=1000000):
+            result = effective_control(snapshot, command)
+        self.assertTrue(result["commandFresh"])
+        self.assertEqual(result["commandAgeMs"], 8000)
+        self.assertEqual(result["mode"], "ACTIVE")
+
     def test_bms_permissions_block_the_affected_direction(self):
         snapshot = {
             "valid": True,

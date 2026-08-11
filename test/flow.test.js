@@ -22,6 +22,7 @@ assert.ok(flow.some(node => node.id === 'bal-rs485-read' && node.command.include
 assert.ok(flow.some(node => node.id === 'bal-rs485-refresh' && node.once === true && node.repeat === '2'))
 assert.ok(flow.some(node => node.id === 'bal-maint-tick' && node.repeat === '5'))
 assert.ok(flow.some(node => node.id === 'bal-controller'))
+assert.ok(flow.filter(node => ['bal-state-persist-delay', 'bal-config-persist-delay'].includes(node.id)).every(node => node.drop === false))
 assert.ok(flow.some(node => node.id === 'bal-controls' && node.type === 'ui-template'))
 assert.ok(flow.some(node => node.id === 'bal-config-log' && node.filename.includes('cerbo-balancer-config.json')))
 assert.ok(flow.some(node => node.id === 'bal-state-load' && node.command.includes('cerbo-balancer-state.json')))
