@@ -562,14 +562,14 @@ def parse_status_44(frame: str, address: int) -> StatusTelemetry44:
     )
 
 
-def parse_system_61(frame: str) -> SystemTelemetry61:
+def parse_system_61(frame: str, expected_address: int = 2) -> SystemTelemetry61:
     """Parse the validated 49-byte CID2=61 system summary.
 
     Dyness/Pylon devices may use ``0xFFFF`` for unavailable counters and
     temperatures.  Those sentinels, and any temperature outside a physical
     BMS range, are returned as ``None`` instead of being displayed as values.
     """
-    info = parse_response(frame, 2, 0x61)["infoAscii"]
+    info = parse_response(frame, expected_address, 0x61)["infoAscii"]
     data = bytes.fromhex(info)
     if len(data) < 49:
         raise ValueError(f"CID2=61 INFO too short: got {len(data)} bytes")

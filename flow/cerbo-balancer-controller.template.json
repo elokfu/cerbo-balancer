@@ -397,7 +397,7 @@
     "type": "function",
     "z": "bal-tab",
     "name": "Format controller status",
-    "func": "const s = msg.payload || {}; const c = s.lastCommand || {}; msg.payload = `${s.mode} | ${s.state} | enabled=${s.enabled} | selected=${s.selectedAddress ?? '—'} | SOC entry/continue=${s.socEntryEligible ? 'YES' : 'no'}/${s.socContinuationEligible ? 'YES' : 'no'} | Icmd=${c.requestedCurrent == null ? '—' : Number(c.requestedCurrent).toFixed(1)} A | charge=${c.chargeEnabled ? 'ON' : 'OFF'} | ${s.lastStopReason || s.lockout || s.fault || 'normal policy'}`; return msg;",
+    "func": "const s = msg.payload || {}; const c = s.lastCommand || {}; msg.payload = `${s.mode} | ${s.state} | enabled=${s.enabled} | selected=${s.selectedAddress ?? '—'} | SOC=${Number.isInteger(s.selectedSoc) ? s.selectedSoc : '—'} | spread=${typeof s.selectedSpread === 'number' ? (s.selectedSpread * 1000).toFixed(1) : '—'} mV | Icmd=${c.requestedCurrent == null ? '—' : Number(c.requestedCurrent).toFixed(1)} A | solar=${s.solarLimited ? 'PAUSED' : 'clear'} | ${s.lastStopReason || s.lockout || s.fault || 'normal policy'}`; return msg;",
     "outputs": 1,
     "timeout": 0,
     "noerr": 0,

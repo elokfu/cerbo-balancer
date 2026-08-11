@@ -91,7 +91,7 @@ cell count, cell ranges, and reconstructed cell sum before publishing data.
 CID2 `0x61` is retained only for system voltage/SOC, and CID2 `0x63` supplies
 limits/status. No candidate Modbus register map is used.
 
-The deployed service polls active batteries every six seconds. This leaves a
+The deployed service polls active batteries every eight seconds. This leaves a
 defined budget for three complete battery reads, system limits, diagnostic
 status reads, and normal serial response variation. Discovery over addresses
 2–16 is incremental: normal operation performs two short, bounded probes after

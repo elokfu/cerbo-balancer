@@ -1,27 +1,25 @@
 ## Dyness Balancer
 
-**TEST** is the startup mode. TEST calculates selected-battery current PI,
-SOC hysteresis, Vmax/CCL stops, discharge recovery, and BMS-limit arbitration,
-but performs no DVCC or charger write.
+`TEST` is shadow mode. `ACTIVE` is available only after the RS485 virtual BMS
+is selected manually in Cerbo and output readback is verified.
 
-**ACTIVE** is guarded by the controller. It requires fresh and independently
-validated cell telemetry, valid configuration, and verified output readback.
-Physical activation additionally requires the separate DVCC commissioning
-approval.
+The controller uses three states: `NORMAL`, `BALANCING`, and `SAFETY_STOP`.
+It selects the first battery in address order whose addressed CID2 `0x61`
+spread is strictly above 30 mV and controls aggregate charge allowance so that
+battery receives approximately 2 A. CID2 `0x42` cells remain visible but do
+not determine controller SOC, Vmin, Vmax, or spread.
 
-TEST mode is shadow-only: it calculates and logs controller commands without
-requiring output readback and without writing charger or voltage settings.
+Cloud-limited current holds the selected battery and freezes feed-forward and
+PI after four consecutive deficient eight-second samples. Master CID2 `0x63`
+limits and permission remain authoritative. A selected battery's local MOSFET
+or protection interruption only excludes that battery; it never switches off
+charging for the remaining parallel batteries.
 
-The controller is enabled only when explicitly selected. `AUTO` evaluates
-automatic balancing entry and completion; `MANUAL` uses Start/Stop. New
-automatic sequences require SOC above 98%; a selected sequence continues above
-97% and exits at or below 97%. Safety handling and stale-input protection apply
-in every mode.
+All expected integer SOC values at 100 complete and latch a session. The latch
+rearms only after master charge permission is observed OFF and then ON for five
+seconds. Effective discharge, SOC below 100, and spread strictly below 30 mV
+also complete the selected session without latching.
 
-Pack-wide Vmin, Vmax, spread, and their battery/cell locations are from the
-CID2 `0x61` system summary. Per-battery Vmin, Vmax, and spread are calculated
-from that battery's validated CID2 `0x42` cell array. If CID2 `0x61` extrema
-are unavailable or unphysical, pack-wide extrema are shown as unavailable and
-elevated balancing is blocked; the controller never substitutes locally
-calculated values. A CCL of zero is not treated as a disconnected battery, but
-it does stop an active balancing charge interval and enters discharge recovery.
+`SAFETY_STOP` requests the conservative 55.0 V / 10.0 A charge-capable fallback.
+Valid master permission, CCL, CVL, and thermal limits can reduce that output.
+No software cell-voltage stop or forced charge/discharge cycle is used.

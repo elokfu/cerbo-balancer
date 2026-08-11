@@ -6,24 +6,25 @@ CID2 `0x42`, `0x44`, `0x61`, and `0x63` read requests.
 
 CID2 `0x42` is authoritative for each battery's cells, voltage, signed
 current, and temperatures. When 15 cells are returned, cell 16 is calculated
-from that same battery's CID2 `0x42` voltage. CID2 `0x61` supplies the
-authoritative pack-wide Vmin, Vmax, spread, and packed battery/cell locations;
-it is never used to reconstruct a cell. Victron DVCC remains enabled; the
-battery source is selected manually in Cerbo for commissioning.
+from that same battery's CID2 `0x42` voltage. Addressed CID2 `0x61` supplies
+each battery's integer SOC, Vmin, Vmax, spread, and packed locations. These
+values alone drive selection and completion; the CID2 `0x42` cell array is
+diagnostic-only for those decisions.
 
 ## Current commissioning boundary
 
-The flow starts in `TEST` mode. It calculates the selected-battery 2 A current
-PI command, SOC hysteresis, Vmax stops, CCL-zero stops, and recovery decisions,
-but its command remains TEST-only and cannot modify DVCC or chargers. ACTIVE
+The flow starts in `TEST` mode. It calculates a feed-forward plus slow-PI
+aggregate-current request that targets 2 A in the first battery whose addressed
+CID2 `0x61` spread is strictly above 30 mV. ACTIVE
 is still a commissioning gate: it requires fresh complete telemetry, a valid
 configuration, output readback, virtual-BMS selection, verified propagation to
 the MPPTs and MultiPlus, and separate explicit activation approval.
 
-Automatic selection starts only above 98% SOC and a selected sequence ends at
-97% SOC or below. A positive BMS CCL is always a physical ceiling; CCL zero
-stops charging and starts natural discharge recovery. The controller never
-uses direct charger D-Bus writes.
+The selected battery remains locked until all expected batteries report integer
+SOC 100, a qualifying effective-discharge completion occurs, or its local
+charge path/protection excludes it. Cloud-limited charging freezes control
+without changing state. There are no forced discharge cycles or software cell
+voltage stops. Master CID2 `0x63` permission and limits remain authoritative.
 
 Run locally:
 

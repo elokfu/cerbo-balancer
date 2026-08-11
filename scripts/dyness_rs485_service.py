@@ -51,12 +51,12 @@ MAX_DISCOVERY_MISSES = 10
 SERIAL_RECONNECT_BACKOFF = 2.0
 STATUS44_INTERVAL = 5.0
 # CID2 44 is diagnostic-only. Its bounded timeout leaves enough room in the
-# six-second primary telemetry cycle for three battery CID2 42 reads, system
-# limits, and incremental discovery.
+# eight-second primary telemetry cycle for three battery CID2 61/42 reads,
+# system limits, and incremental discovery.
 STATUS44_QUERY_TIMEOUT = 0.25
 # Discovery must never monopolise the serial bus. Two normal probes per poll
 # complete a scan within 60 seconds. Recovery checks the full address range in
-# one six-second cycle using the bounded discovery timeout.
+# one eight-second cycle using the bounded discovery timeout.
 NORMAL_DISCOVERY_PROBES_PER_POLL = 2
 RECOVERY_DISCOVERY_PROBES_PER_POLL = len(EXPECTED_ADDRESSES)
 DISCOVERY_QUERY_TIMEOUT = 0.12
@@ -424,7 +424,9 @@ class CsvLogger:
         "virtual_bms_output_valid", "virtual_bms_arbitration_reason",
     ]
     battery_fields = [
-        "present", "valid", "voltage_v", "current_a", "status1", "status2",
+        "present", "valid", "voltage_v", "current_a", "soc_percent",
+        "vmin_v", "vmin_location", "vmax_v", "vmax_location", "spread_mv",
+        "status1", "status2",
         "status3", "status4", "status5",
         *[f"cell_{index:02d}_v" for index in range(1, 17)],
         *[f"temp_{index:02d}_c" for index in range(1, 6)],
@@ -622,6 +624,12 @@ class CsvLogger:
             if address not in self.initial_addresses:
                 continue
             prefix = f"battery_{address:02d}_"; row[prefix + "present"] = True; row[prefix + "valid"] = battery.get("valid"); row[prefix + "voltage_v"] = self._format_voltage(battery.get("voltage")); row[prefix + "current_a"] = self._format_number(battery.get("current"))
+            row[prefix + "soc_percent"] = battery.get("soc") if isinstance(battery.get("soc"), int) else ""
+            row[prefix + "vmin_v"] = self._format_voltage(battery.get("vmin"), 3)
+            row[prefix + "vmax_v"] = self._format_voltage(battery.get("vmax"), 3)
+            row[prefix + "spread_mv"] = self._format_spread_mv(battery.get("spread"))
+            row[prefix + "vmin_location"] = f"battery {battery.get('vminAddress')} cell {battery.get('vminIndex')}"
+            row[prefix + "vmax_location"] = f"battery {battery.get('vmaxAddress')} cell {battery.get('vmaxIndex')}"
             status = battery.get("status44") or {}
             for index in range(1, 6):
                 row[prefix + f"status{index}"] = self._format_status_byte(
@@ -631,7 +639,7 @@ class CsvLogger:
             for index, value in enumerate(battery.get("temperatures") or [], 1): row[prefix + f"temp_{index:02d}_c"] = value
         with target.open("a", newline="", encoding="utf-8") as stream:
             if not exists:
-                stream.write(f"# schema_version=10\n# serial_port={snapshot.get('serialPort')}\n# baud={snapshot.get('baud')}\n# poll_interval_seconds=6\n# timestamp_format=HH:MM:SS {self.timezone_name}\n# virtual_bms_service=com.victronenergy.battery.rs485_dyness\n# virtual_bms_device_instance=100\n# dvcc_output_mode=TEST/shadow\n# status1_bits=bit7 pack under-voltage protection; bit6 charge temperature protection; bit5 discharge temperature protection; bit4 discharge over-current protection; bit3 reserved; bit2 charge over-current protection; bit1 cell under-voltage protection; bit0 over-voltage protection\n# status2_bits=bit7-bit4 reserved; bit3 module power active; bit2 discharge MOSFET on; bit1 charge MOSFET on; bit0 precharge MOSFET on\n# status3_bits=bit7 effective charging; bit6 effective discharging; bit5 heater active; bit4-bit2 reserved; bit3 fully charged; bit2-bit1 reserved; bit0 buzzer active\n# status4_bits=bit7-bit0 cell voltage-check faults for cells 8-1 respectively\n# status5_bits=bit7-bit0 cell voltage-check faults for cells 16-9 respectively\n# initial_addresses={','.join(str(address) for address in self.initial_addresses)}\n")
+                stream.write(f"# schema_version=11\n# serial_port={snapshot.get('serialPort')}\n# baud={snapshot.get('baud')}\n# poll_interval_seconds=8\n# timestamp_format=HH:MM:SS {self.timezone_name}\n# virtual_bms_service=com.victronenergy.battery.rs485_dyness\n# virtual_bms_device_instance=100\n# dvcc_output_mode=TEST/shadow\n# status1_bits=bit7 pack under-voltage protection; bit6 charge temperature protection; bit5 discharge temperature protection; bit4 discharge over-current protection; bit3 reserved; bit2 charge over-current protection; bit1 cell under-voltage protection; bit0 over-voltage protection\n# status2_bits=bit7-bit4 reserved; bit3 module power active; bit2 discharge MOSFET on; bit1 charge MOSFET on; bit0 precharge MOSFET on\n# status3_bits=bit7 effective charging; bit6 effective discharging; bit5 heater active; bit4-bit2 reserved; bit3 fully charged; bit2-bit1 reserved; bit0 buzzer active\n# status4_bits=bit7-bit0 cell voltage-check faults for cells 8-1 respectively\n# status5_bits=bit7-bit0 cell voltage-check faults for cells 16-9 respectively\n# initial_addresses={','.join(str(address) for address in self.initial_addresses)}\n")
                 csv.DictWriter(stream, fieldnames=columns).writeheader()
             csv.DictWriter(stream, fieldnames=columns).writerow(row)
         self.next_sample_number += 1
@@ -653,10 +661,10 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
     limits = snapshot.get("limits") or {}
     status_flags = limits.get("statusFlags") or {}
     valid = bool(snapshot.get("valid"))
-    bms_cvl = float(limits.get("chargeVoltage", 53.0)) if valid else 53.0
+    bms_cvl = float(limits.get("chargeVoltage", 55.0)) if valid else None
     bms_ccl = max(0.0, float(limits.get("chargeCurrent", 0.0))) if valid else 0.0
     bms_dcl = abs(float(limits.get("dischargeCurrentSigned", 0.0))) if valid else 0.0
-    factor = thermal_factor(snapshot)
+    factor = thermal_factor(snapshot) if valid else 1.0
     charge_blocked = status_flags.get("chargeEnabled") is False
     discharge_blocked = status_flags.get("dischargeEnabled") is False
     if charge_blocked:
@@ -671,9 +679,19 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
     charge_request_current = requested_current if controller_charge_enabled else 0.0
     active_command = command if command and command.get("mode") == "ACTIVE" else None
     active_command_fresh = bool(active_command and fresh_command)
-    effective_voltage = min(requested_voltage, bms_cvl, 53.0 if charge_blocked else 56.5) if valid else 53.0
-    effective_current = min(charge_request_current, bms_ccl, 100.0) * factor if valid else 0.0
-    effective_charge_enabled = bool(valid and status_flags.get("chargeEnabled") is True and controller_charge_enabled and effective_current > 0)
+    # Invalid pack telemetry must remain charge-capable at the explicitly
+    # requested conservative fallback. Valid master limits and permission are
+    # still authoritative whenever they are available.
+    applied_voltage = requested_voltage if active_command_fresh else 55.2
+    applied_current = charge_request_current if active_command_fresh else 100.0
+    applied_charge_enabled = controller_charge_enabled if active_command_fresh else True
+    effective_voltage = min(applied_voltage, bms_cvl, 56.5) if valid else 55.0
+    effective_current = min(applied_current, bms_ccl, 100.0) * factor if valid else 10.0
+    effective_charge_enabled = bool(
+        (not valid) or
+        (applied_charge_enabled and effective_current > 0 and
+         status_flags.get("chargeEnabled") is True)
+    )
     effective_discharge_enabled = bool(valid and status_flags.get("dischargeEnabled") is True and bms_dcl > 0)
     if not valid:
         reason = "RS485_TELEMETRY_INVALID"
@@ -715,7 +733,7 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
         "thermalFactor": factor,
         "statusFlags": status_flags,
         "chargeBlockedByStatus": charge_blocked,
-        "chargeBlockedByController": not controller_charge_enabled,
+        "chargeBlockedByController": bool(active_command_fresh and not controller_charge_enabled),
         "dischargeBlockedByStatus": discharge_blocked,
         "outputValid": valid,
         "reason": reason,
@@ -1021,12 +1039,14 @@ class ReadOnlyPoller:
                 "current61": None,
                 "soc61": None,
             }
+            system61_by_address: dict[int, dict[str, Any]] = {}
             system_voltage = system_soc = None
             errors = []
             if system:
                 try:
-                    parsed_system = parse_system_61(system)
+                    parsed_system = parse_system_61(system, 2)
                     system_values = parsed_system.as_dict()
+                    system61_by_address[2] = system_values
                     system_voltage, system_soc = parsed_system.voltage, parsed_system.soc
                     raw_frames.append({"cid2": "61", "address": 2, "frame": system.decode("ascii")})
                 except ValueError as error:
@@ -1049,11 +1069,48 @@ class ReadOnlyPoller:
             ) else set()
             status_errors: list[str] = []
             for address in addresses:
+                if address not in system61_by_address:
+                    system61_frame = self.query(port, address, 0x61)
+                    if system61_frame:
+                        try:
+                            per_battery_system = parse_system_61(system61_frame, address).as_dict()
+                            system61_by_address[address] = per_battery_system
+                            raw_frames.append({
+                                "cid2": "61",
+                                "address": address,
+                                "frame": system61_frame.decode("ascii"),
+                            })
+                        except (UnicodeDecodeError, ValueError) as error:
+                            errors.append(f"CID2=61 address {address:02X}: {error}")
+                    else:
+                        errors.append(f"CID2=61 address {address:02X} timeout")
                 frame = self.query(port, address, 0x42)
                 if not frame:
+                    errors.append(f"CID2=42 address {address:02X} timeout")
                     continue
                 try:
                     battery = parse_pack_telemetry(frame, address).as_dict()
+                    addressed_system = system61_by_address.get(address)
+                    addressed_extrema = system_cell_extrema(addressed_system or {})
+                    addressed_soc = addressed_system.get("soc61") if addressed_system else None
+                    battery.update({
+                        "system61": addressed_system,
+                        "system61Valid": bool(
+                            addressed_extrema["valid"] and
+                            isinstance(addressed_soc, int) and 0 <= addressed_soc <= 100
+                        ),
+                        "soc": addressed_soc,
+                        "vmin": addressed_extrema["vmin"],
+                        "vminId": addressed_system.get("minimumCellId61") if addressed_system else None,
+                        "vminAddress": addressed_extrema["minCellAddress"],
+                        "vminIndex": addressed_extrema["minCellIndex"],
+                        "vmax": addressed_extrema["vmax"],
+                        "vmaxId": addressed_system.get("maximumCellId61") if addressed_system else None,
+                        "vmaxAddress": addressed_extrema["maxCellAddress"],
+                        "vmaxIndex": addressed_extrema["maxCellIndex"],
+                        "spread": addressed_extrema["spread"],
+                        "controllerExtremaSource": "CID2_61_ADDRESSED_SYSTEM_SUMMARY",
+                    })
                     battery["systemVoltageDeltaMv"] = ((battery["voltage"] - system_voltage) * 1000
                                                          if system_voltage is not None else None)
                     status44 = self.status44_cache.get(address)
@@ -1106,7 +1163,7 @@ class ReadOnlyPoller:
                 self.next_status_at = time.monotonic() + STATUS44_INTERVAL
             # Preserve the expected set used for this active telemetry sample.
             # A completed discovery can add a new battery, which is polled as
-            # active on the following two-second sample rather than causing a
+            # active on the following eight-second sample rather than causing a
             # one-sample false "incomplete telemetry" fault.
             expected_addresses_before_discovery = set(self.active_addresses)
             discovery_scanned, discovery_complete = self._advance_discovery(
@@ -1118,7 +1175,10 @@ class ReadOnlyPoller:
             complete_battery_set = bool(expected_addresses) and not self.pending_removal and responding_addresses == expected_addresses
             currents = [item["current"] for item in valid_batteries]
             temps = [temperature for item in valid_batteries for temperature in item["temperatures"]]
-            all_expected_valid = complete_battery_set and len(valid_batteries) == len(batteries)
+            all_expected_valid = (
+                complete_battery_set and len(valid_batteries) == len(batteries) and
+                all(item.get("system61Valid") is True for item in batteries)
+            )
             extrema = system_cell_extrema(system_values)
             if not extrema["valid"]:
                 errors.append("CID2=61 cell extrema unavailable or invalid")
@@ -1143,6 +1203,7 @@ class ReadOnlyPoller:
                 "minimumTemperature": min(temps) if temps else None, "maximumTemperature": max(temps) if temps else None,
                 "averageTemperature": sum(temps) / len(temps) if temps else None},
                 "cellTelemetryValid": bool(all_expected_valid and extrema["valid"]),
+                "addressedSystemTelemetryValid": bool(all_expected_valid),
                 "decoderHealth": "healthy" if not errors else "degraded", "rawFrames": raw_frames,
             }
             self.serial_health.update({
@@ -1316,9 +1377,9 @@ class DbusPublisher:
         selection = snapshot.get("activeBms") or self.read_active_selection()
         voltage = system.get("voltage61") if snapshot.get("valid") else 53.0
         current = aggregate.get("summedBatteryCurrent") if snapshot.get("valid") else 0.0
-        ccl = control.get("effectiveChargeCurrent") if snapshot.get("valid") else 0.0
+        ccl = control.get("effectiveChargeCurrent")
         dcl = control.get("effectiveDischargeCurrent") if snapshot.get("valid") else 0.0
-        cvl = control.get("effectiveChargeVoltage") if snapshot.get("valid") else 53.0
+        cvl = control.get("effectiveChargeVoltage")
         requested_voltage = control.get("requestedVoltage")
         requested_current = control.get("requestedCurrent")
         command_age = control.get("commandAgeMs")
@@ -1331,19 +1392,21 @@ class DbusPublisher:
             "/Dc/0/Voltage": dbus.Double(float(voltage or 53.0)),
             "/Dc/0/Current": dbus.Double(float(current or 0.0)),
             "/Dc/0/Power": dbus.Double(float((voltage or 53.0) * (current or 0.0))),
-            "/Info/MaxChargeVoltage": dbus.Double(float(cvl or 53.0)),
+            "/Info/MaxChargeVoltage": dbus.Double(float(cvl or 55.0)),
             "/Info/MaxChargeCurrent": dbus.Double(float(ccl or 0.0)),
             "/Info/MaxDischargeCurrent": dbus.Double(float(dcl or 0.0)),
-            "/Bms/AllowToCharge": dbus.Boolean(bool(snapshot.get("valid") and ccl is not None and ccl > 0 and status_flags.get("chargeEnabled") is True and not control.get("chargeBlockedByStatus") and not control.get("chargeBlockedByController"))),
+            "/Bms/AllowToCharge": dbus.Boolean(bool(control.get("effectiveChargeEnabled"))),
             "/Bms/AllowToDischarge": dbus.Boolean(bool(snapshot.get("valid") and dcl is not None and dcl > 0 and status_flags.get("dischargeEnabled") is True and not control.get("dischargeBlockedByStatus"))),
             "/Bms/StatusRaw": dbus.UInt32(int(limits.get("statusRaw") or 0)),
             "/Bms/Status": dbus.String("permissions"),
-            "/Bms/ChargeEnabled": dbus.Boolean(bool(status_flags.get("chargeEnabled"))),
+            "/Bms/ChargeEnabled": dbus.Boolean(bool(control.get("effectiveChargeEnabled"))),
             "/Bms/DischargeEnabled": dbus.Boolean(bool(status_flags.get("dischargeEnabled"))),
             "/Bms/StrongCharge": dbus.Boolean(bool(status_flags.get("strongCharge"))),
             "/Bms/FullCharge": dbus.Boolean(bool(status_flags.get("fullCharge"))),
             "/Bms/UnknownStatusBits": dbus.UInt32(int(status_flags.get("unknownReservedBits") or 0)),
-            "/Connected": dbus.Boolean(bool(snapshot.get("valid"))),
+            # The D-Bus service remains connected and advertises the explicit
+            # fallback even while telemetry itself is invalid.
+            "/Connected": dbus.Boolean(True),
             "/State": dbus.String(state_text if control else snapshot.get("reason") or "RS485 unavailable"),
             "/Control/RequestedChargeVoltage": dbus.Double(float(requested_voltage or 0.0)),
             "/Control/RequestedChargeCurrent": dbus.Double(float(requested_current or 0.0)),
@@ -1370,7 +1433,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", default=DEFAULT_PORT)
     parser.add_argument("--baud", type=int, default=115200)
-    parser.add_argument("--interval", type=float, default=6.0)
+    parser.add_argument("--interval", type=float, default=8.0)
     parser.add_argument("--timeout", type=float, default=0.7)
     parser.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
     parser.add_argument("--once", action="store_true")

@@ -2,8 +2,8 @@
 
 The controller page is `/dashboard/balancer`. The maintenance page is
 `/dashboard/balancer-maintenance` and refreshes its telemetry snapshot every
-five seconds while the RS485 poller runs every six seconds. The controller
-accepts a fresh complete telemetry sample for up to 15 seconds, allowing a
+five seconds while the RS485 poller runs every eight seconds. The controller
+accepts a fresh complete telemetry sample for up to 20 seconds, allowing a
 complete three-battery polling cycle and a bounded delayed retry without a
 false stale-telemetry fault.
 
@@ -50,11 +50,10 @@ old, measurement cards remain visible with a `STALE` banner. This is display
 only: the controller still treats the current telemetry as invalid and keeps
 ACTIVE blocked. After ten seconds, measurements are blanked.
 
-The controller page reports the selected battery, SOC entry/continuation gate,
-state, cycle count, stop reason, aggregate current command, and charge-enable
-intent. Automatic selection needs SOC above 98%; an active sequence continues
-above 97% and exits at or below 97%. It controls selected-battery current
-toward 2 A through aggregate DVCC current allowance, without assuming equal
+The controller page reports the selected battery, addressed integer SOC and
+extrema, state, completion latch, aggregate request, feed-forward share, PI
+terms, and solar-limited pause counters. It controls selected-battery current
+toward 2 A through aggregate DVCC current allowance without assuming equal
 parallel current sharing.
 
 The controller page also reports the active Cerbo BMS source and DeviceInstance
@@ -66,14 +65,15 @@ standard effective values are the ones published to DVCC and visible through
 the selected battery monitor in VRM.
 
 The controller page includes live selected-current, selected Vmax/Vmin, and
-selected-spread graphs. Its configuration panel exposes SOC gates, spread and
-current targets, voltage ceilings, PI gains, aggregate limit, and recovery
-timeout. Applying values validates them before saving the controller state to
+selected-spread graphs independently of controller state. Its configuration
+panel exposes the 30 mV spread threshold, current target, feed-forward filter,
+slow PI, aggregate bounds, solar tolerance, safety fallback, and freshness
+limit. Applying values validates them before saving the controller state to
 `cerbo-balancer-state.json` and the active configuration to
 `cerbo-balancer-config.json`; both are restored on Node-RED startup.
 They use append-only JSON snapshots; startup restores the final valid snapshot.
 
-Mode starts at `TEST`. TEST calculates current-control and recovery commands
+Mode starts at `TEST`. TEST calculates current-control commands
 but performs no charger or voltage write and does not require output readback.
 ACTIVE remains rejected unless fresh complete telemetry, valid configuration,
 and verified output readback are present; physical activation additionally

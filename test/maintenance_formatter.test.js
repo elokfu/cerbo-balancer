@@ -82,6 +82,12 @@ const valid = {
   batteries: [{
     address: 2,
     valid: true,
+    soc: 100,
+    vmin: 3.342,
+    vminId: 0x0B02,
+    vmax: 3.524,
+    vmaxId: 0x0702,
+    spread: 0.182,
     voltage: 54.49,
     current: 0.1,
     temperatures: [26.1, 25.9, 26.1, 26.4, 26.3],
@@ -118,6 +124,12 @@ assert.equal(live.system.mosfetTemperature.minimumId, 'Battery 2 · Sensor 02')
 assert.equal(live.system.bmsTemperature.average, '34.2')
 assert.equal(live.system.bmsTemperature.maximumId, 'Battery 2 · Sensor 01')
 assert.equal(live.system.bmsTemperature.single, null)
+assert.equal(live.batteries[0].soc, '100')
+assert.equal(live.batteries[0].vmin, '3.342')
+assert.equal(live.batteries[0].vmax, '3.524')
+assert.equal(live.batteries[0].cellSpread, '0.182')
+assert.equal(live.batteries[0].cellExtremaSource, 'addressed CID2 61')
+assert.equal(live.batteries[0].vminLocation, 'Battery 2 · Cell 11')
 
 const effectiveCells = (values) => values.map((voltage, index) => ({ index: index + 1, voltage }))
 const unbalancedCounts = format({

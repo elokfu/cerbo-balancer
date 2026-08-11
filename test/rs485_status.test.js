@@ -21,7 +21,9 @@ const normalized = normalizeSnapshot({
   cellTelemetryValid: true,
   system: { voltage61: 53.2, soc61: 91 },
   limits: { chargeVoltage: 56.5, chargeCurrent: 56, dischargeCurrentSigned: -198.8, statusRaw: 0 },
-  aggregate: { summedBatteryCurrent: -4.2, vmax: 3.52, vmin: 3.49, maxCellIndex: 4, minCellIndex: 2 }
+  aggregate: { summedBatteryCurrent: -4.2, vmax: 3.52, vmin: 3.49, maxCellIndex: 4, minCellIndex: 2 },
+  expectedAddresses: [2],
+  batteries: [{ address: 2, valid: true, system61Valid: true, soc: 91, vmin: 3.49, vmax: 3.52, spread: 0.03 }]
 }, 1000)
 assert.equal(normalized.packVoltage, 53.2)
 assert.equal(normalized.packCurrent, -4.2)

@@ -112,8 +112,8 @@ class DynessServiceTests(unittest.TestCase):
         snapshot = poller.poll()
         self.assertFalse(snapshot["valid"])
         self.assertFalse(snapshot["cellTelemetryValid"])
-        self.assertEqual(snapshot["effectiveControl"]["effectiveChargeCurrent"], 0.0)
-        self.assertEqual(snapshot["effectiveControl"]["effectiveChargeVoltage"], 53.0)
+        self.assertEqual(snapshot["effectiveControl"]["effectiveChargeCurrent"], 10.0)
+        self.assertEqual(snapshot["effectiveControl"]["effectiveChargeVoltage"], 55.0)
         self.assertEqual(poller.active_addresses, [2])
         self.assertEqual(snapshot["serialHealth"]["state"], "disconnected")
 
@@ -189,6 +189,28 @@ class DynessServiceTests(unittest.TestCase):
         self.assertFalse(inhibited["effectiveChargeEnabled"])
         self.assertEqual(inhibited["reason"], "CONTROLLER_CHARGE_INHIBIT")
 
+    def test_test_mode_keeps_requested_values_shadow_only(self):
+        snapshot = {
+            "valid": True,
+            "limits": {
+                "chargeVoltage": 56.5,
+                "chargeCurrent": 56.0,
+                "dischargeCurrentSigned": -198.8,
+                "statusFlags": {"chargeEnabled": True, "dischargeEnabled": True},
+            },
+            "batteries": [{"temperatures": [25.0]}],
+        }
+        command = {
+            "mode": "TEST", "timestamp": 999000,
+            "requestedVoltage": 56.5, "requestedCurrent": 2.0,
+            "chargeEnabled": True,
+        }
+        with patch.object(service, "now_ms", return_value=1000000):
+            result = effective_control(snapshot, command)
+        self.assertEqual(result["requestedCurrent"], 2.0)
+        self.assertEqual(result["effectiveChargeVoltage"], 55.2)
+        self.assertEqual(result["effectiveChargeCurrent"], 56.0)
+        self.assertEqual(result["reason"], "TEST_MODE_SHADOW_OUTPUT")
     def test_csv_logs_requested_and_effective_virtual_bms_output(self):
         snapshot = {
             "timestamp": 1000000,
@@ -445,7 +467,7 @@ class DynessServiceTests(unittest.TestCase):
             },
         }
         result = effective_control(snapshot, None)
-        self.assertEqual(result["effectiveChargeVoltage"], 53.0)
+        self.assertEqual(result["effectiveChargeVoltage"], 55.2)
         self.assertEqual(result["effectiveChargeCurrent"], 0.0)
         self.assertEqual(result["effectiveDischargeCurrent"], 198.8)
 

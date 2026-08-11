@@ -104,6 +104,19 @@ class DynessProtocolTests(unittest.TestCase):
         self.assertAlmostEqual(parsed.maximum_bms_temperature, 34.15, places=2)
         self.assertAlmostEqual(parsed.minimum_bms_temperature, 34.15, places=2)
 
+    def test_system_summary_accepts_the_address_being_polled(self):
+        data = bytearray(49)
+        data[0:2] = (53250).to_bytes(2, "big")
+        data[4] = 99
+        data[11:13] = (3340).to_bytes(2, "big")
+        data[13:15] = (0x0703).to_bytes(2, "big")
+        data[15:17] = (3310).to_bytes(2, "big")
+        data[17:19] = (0x0203).to_bytes(2, "big")
+        parsed = parse_system_61(response(3, 0x61, data.hex().upper()), 3)
+        self.assertEqual(parsed.soc, 99)
+        self.assertAlmostEqual(parsed.maximum_cell_voltage, 3.340)
+        self.assertAlmostEqual(parsed.minimum_cell_voltage, 3.310)
+
     def test_status_byte_decodes_permission_state_bits(self):
         status = decode_status(0xFF)
         self.assertTrue(status["chargeEnabled"])
