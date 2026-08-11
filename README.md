@@ -90,7 +90,7 @@ See [RS485 investigation](docs/rs485-investigation.md), [dashboard operation](do
 ## Engineering algorithm reference PDF
 
 The generated operator and engineering reference is
-[`output/pdf/dyness-balancer-algorithm-reference.pdf`](output/pdf/dyness-balancer-algorithm-reference.pdf).
+[`output/pdf/dyness-balancer-algorithm-reference-with-toc.pdf`](output/pdf/dyness-balancer-algorithm-reference-with-toc.pdf).
 It documents the deployed telemetry sources, three-state controller,
 virtual-BMS/DVCC arbitration, safety fallback, and CSV recording schema.
 
