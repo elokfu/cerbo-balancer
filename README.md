@@ -86,3 +86,19 @@ arbitration details. The current CAN selection remains the default until the
 commissioning handover is deliberately performed.
 
 See [RS485 investigation](docs/rs485-investigation.md), [dashboard operation](docs/dashboard.md), and [DVCC handover](docs/dvcc-handover.md).
+
+## Engineering algorithm reference PDF
+
+The generated operator and engineering reference is
+[`output/pdf/dyness-balancer-algorithm-reference.pdf`](output/pdf/dyness-balancer-algorithm-reference.pdf).
+It documents the deployed telemetry sources, three-state controller,
+virtual-BMS/DVCC arbitration, safety fallback, and CSV recording schema.
+
+Regenerate it with ReportLab:
+
+```powershell
+python docs/pdf/generate_dyness_balancer_pdf.py
+```
+
+The generator uses vector ReportLab diagrams and writes the stable output name
+under `output/pdf/`.
