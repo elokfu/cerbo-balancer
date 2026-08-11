@@ -38,6 +38,13 @@ function telemetry (batteryValues = [battery()], overrides = {}) {
     cvl: 56.5,
     limits: { statusFlags: { chargeEnabled: true, dischargeEnabled: true } },
     effectiveControl: { effectiveChargeCurrent: 100, thermalFactor: 1, statusFlags: { chargeEnabled: true } },
+    chargeControlSettings: {
+      readbackValid: true,
+      maxChargeVoltage: 55.0,
+      maxChargeCurrent: 100.0,
+      voltageLimitEnabled: true,
+      currentLimitEnabled: true
+    },
     activeBms: { source: 'virtual', virtualSelected: true, label: 'RS485 virtual BMS active', activeBmsInstance: 100 },
     expectedBatteries: batteryValues.map(item => item.address),
     expectedAddresses: batteryValues.map(item => item.address),
@@ -63,6 +70,22 @@ normal.handle({ type: 'set_enabled', value: true, timestamp: clock })
 assert.equal(normal.getState().state, STATES.BALANCING)
 assert.equal(normal.getState().selectedAddress, 2)
 assert.equal(command(normal.handle({ type: 'tick', timestamp: clock })).mode, MODES.TEST)
+
+// NORMAL follows the read-only limits configured in the Cerbo Charge Control UI.
+const uiLimits = createBalancerController({ now: () => clock })
+uiLimits.handle({ type: 'telemetry', telemetry: telemetry([battery(2, { spread: 0.020 })], {
+  chargeControlSettings: {
+    readbackValid: true,
+    maxChargeVoltage: 54.8,
+    maxChargeCurrent: 42,
+    voltageLimitEnabled: true,
+    currentLimitEnabled: true
+  }
+}), timestamp: clock })
+uiLimits.handle({ type: 'set_enabled', value: true, timestamp: clock })
+const uiNormalCommand = command(uiLimits.handle({ type: 'tick', timestamp: clock }))
+assert.equal(uiNormalCommand.requestedVoltage, 54.8)
+assert.equal(uiNormalCommand.requestedCurrent, 42)
 
 // CID2 42 cells cannot make an addressed-CID2 61 ineligible battery selectable.
 const sourceAuthority = createBalancerController({ now: () => clock })

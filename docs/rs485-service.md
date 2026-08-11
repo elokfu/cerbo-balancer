@@ -92,6 +92,13 @@ controller request, command freshness/age, thermal factor, arbitration
 reason, and the active Cerbo BMS selection. `/State` includes a concise
 effective-output summary suitable for GX/VRM device status.
 
+The service reads `/Settings/SystemSetup/MaxChargeVoltage` and
+`/Settings/SystemSetup/MaxChargeCurrent` from `com.victronenergy.settings`.
+These are the operator-owned limits shown under **Settings → System Setup →
+Charge Control**. Normal controller requests use these values directly, and
+enabled UI limits remain ceilings in final virtual-BMS arbitration. The
+service never writes either setting.
+
 The active source is selected manually in Cerbo at **Settings → System Setup
 → Batteries → Battery monitor**. Choose `DYNESS-L BATTERY on CAN-bus`
 (`com.victronenergy.battery/512`) to use the normal CAN BMS, or `Dyness RS485

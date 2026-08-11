@@ -26,6 +26,12 @@ charge path/protection excludes it. Cloud-limited charging freezes control
 without changing state. There are no forced discharge cycles or software cell
 voltage stops. Master CID2 `0x63` permission and limits remain authoritative.
 
+In `NORMAL`, requested charge voltage and current come from the Cerbo's
+read-only **Settings → System Setup → Charge Control** values. The virtual BMS
+also treats enabled UI limits as ceilings during balancing, in addition to the
+Dyness BMS and thermal limits. Changing the GX settings therefore takes effect
+on the next telemetry cycle without editing balancer configuration.
+
 Run locally:
 
 ```text

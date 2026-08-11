@@ -9,7 +9,6 @@ const STATES = Object.freeze({
 const MODES = Object.freeze({ TEST: 'TEST', ACTIVE: 'ACTIVE' })
 
 const DEFAULT_CONFIG = Object.freeze({
-  normalPackVoltageMax: 55.2,
   balancingVoltageCeiling: 56.5,
   safetyFallbackVoltage: 55.0,
   safetyFallbackCurrent: 10.0,
@@ -67,11 +66,14 @@ function emptyState () {
 
 function validateConfig (candidate = {}) {
   const config = { ...DEFAULT_CONFIG, ...candidate }
+  // Normal limits are owned by the Cerbo Charge Control UI, not this
+  // controller. Drop the former persisted override during migration.
+  delete config.normalPackVoltageMax
   // Old persisted values must not shorten the new eight-second telemetry budget.
   config.telemetryStaleMs = Math.max(DEFAULT_CONFIG.telemetryStaleMs, config.telemetryStaleMs)
   const errors = []
   const positive = [
-    'normalPackVoltageMax', 'balancingVoltageCeiling', 'safetyFallbackVoltage',
+    'balancingVoltageCeiling', 'safetyFallbackVoltage',
     'safetyFallbackCurrent', 'balancerSpreadThreshold', 'balanceBatteryCurrentTarget',
     'currentTargetTolerance', 'feedForwardAlpha', 'shareMinimumSelectedCurrent',
     'shareMinimumTotalCurrent', 'feedForwardFallbackCurrent', 'kp', 'ki',
@@ -219,6 +221,19 @@ function createBalancerController (options = {}) {
   }
 
   function limits () { return telemetry && telemetry.limits ? telemetry.limits : {} }
+  function chargeControlSettings () {
+    return telemetry && telemetry.chargeControlSettings ? telemetry.chargeControlSettings : {}
+  }
+  function normalChargeVoltage () {
+    const settings = chargeControlSettings()
+    if (settings.voltageLimitEnabled === true && finite(settings.maxChargeVoltage)) return settings.maxChargeVoltage
+    return finite(limits().chargeVoltage) ? limits().chargeVoltage : config.safetyFallbackVoltage
+  }
+  function normalChargeCurrent () {
+    const settings = chargeControlSettings()
+    if (settings.currentLimitEnabled === true && finite(settings.maxChargeCurrent)) return Math.max(0, settings.maxChargeCurrent)
+    return finite(limits().chargeCurrent) ? Math.max(0, limits().chargeCurrent) : config.safetyFallbackCurrent
+  }
   function chargePermitted () { return limits().statusFlags && limits().statusFlags.chargeEnabled === true }
   function ccl () { return finite(telemetry && telemetry.ccl) ? Math.max(0, telemetry.ccl) : null }
   function virtualBmsSelected () { return Boolean(telemetry && telemetry.activeBms && telemetry.activeBms.virtualSelected === true) }
@@ -356,8 +371,12 @@ function createBalancerController (options = {}) {
   }
 
   function commandFromState (error, reason, totalCurrent = positiveTotalCurrent(), saturated = false) {
+    const settings = chargeControlSettings()
+    const requestedVoltage = settings.voltageLimitEnabled === true && finite(settings.maxChargeVoltage)
+      ? Math.min(config.balancingVoltageCeiling, settings.maxChargeVoltage)
+      : config.balancingVoltageCeiling
     return {
-      requestedVoltage: config.balancingVoltageCeiling,
+      requestedVoltage,
       requestedCurrent: state.aggregateCurrentCommand,
       chargeEnabled: true,
       reason,
@@ -374,7 +393,7 @@ function createBalancerController (options = {}) {
   }
 
   function normalCommand (reason) {
-    return { requestedVoltage: config.normalPackVoltageMax, requestedCurrent: config.aggregateCurrentMaximum, chargeEnabled: true, reason }
+    return { requestedVoltage: normalChargeVoltage(), requestedCurrent: normalChargeCurrent(), chargeEnabled: true, reason }
   }
 
   function safetyCommand (reason) {
@@ -513,6 +532,7 @@ function createBalancerController (options = {}) {
       activeBms: telemetry && telemetry.activeBms ? { ...telemetry.activeBms } : null,
       virtualBmsSelected: virtualBmsSelected(),
       virtualBms: telemetry && telemetry.effectiveControl ? { ...telemetry.effectiveControl } : null,
+      chargeControlSettings: { ...chargeControlSettings() },
       csvLogging: { ...state.csvLogging },
       selectedCurrent: selected && selected.current,
       selectedSoc: selected && selected.soc,

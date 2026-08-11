@@ -11,7 +11,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import dyness_rs485_service as service  # noqa: E402
-from dyness_rs485_service import CsvLogger, JsonlStore, ReadOnlyPoller, effective_control  # noqa: E402
+from dyness_rs485_service import (  # noqa: E402
+    CsvLogger,
+    JsonlStore,
+    ReadOnlyPoller,
+    charge_control_settings,
+    effective_control,
+)
 from dyness_rs485_protocol import checksum, length_field  # noqa: E402
 
 
@@ -39,6 +45,24 @@ def system_summary_info(
 
 
 class DynessServiceTests(unittest.TestCase):
+    def test_charge_control_settings_normalize_cerbo_ui_limits(self):
+        enabled = charge_control_settings({
+            "MaxChargeVoltage": 55.0,
+            "MaxChargeCurrent": 100,
+        })
+        self.assertTrue(enabled["readbackValid"])
+        self.assertTrue(enabled["voltageLimitEnabled"])
+        self.assertTrue(enabled["currentLimitEnabled"])
+        self.assertEqual(enabled["maxChargeVoltage"], 55.0)
+        self.assertEqual(enabled["maxChargeCurrent"], 100.0)
+
+        disabled = charge_control_settings({
+            "MaxChargeVoltage": 0.0,
+            "MaxChargeCurrent": -1,
+        })
+        self.assertFalse(disabled["voltageLimitEnabled"])
+        self.assertFalse(disabled["currentLimitEnabled"])
+
     def test_serial_session_is_reused_until_disconnect(self):
         class FakeSerialPort:
             is_open = True
@@ -153,6 +177,55 @@ class DynessServiceTests(unittest.TestCase):
         self.assertTrue(control["effectiveChargeEnabled"])
         self.assertTrue(control["allowToCharge"])
         self.assertEqual(control["reason"], "BMS_OR_SAFETY_LIMIT")
+
+    def test_cerbo_ui_limits_normal_and_active_arbitration(self):
+        snapshot = {
+            "valid": True,
+            "chargeControlSettings": {
+                "readbackValid": True,
+                "maxChargeVoltage": 55.0,
+                "maxChargeCurrent": 40.0,
+                "voltageLimitEnabled": True,
+                "currentLimitEnabled": True,
+            },
+            "limits": {
+                "chargeVoltage": 56.5,
+                "chargeCurrent": 56.0,
+                "dischargeCurrentSigned": -198.8,
+                "statusFlags": {"chargeEnabled": True, "dischargeEnabled": True},
+            },
+            "batteries": [{"temperatures": [25.0]}],
+        }
+        test_command = {
+            "mode": "TEST", "timestamp": 999000,
+            "requestedVoltage": 56.5, "requestedCurrent": 80.0,
+            "chargeEnabled": True,
+        }
+        with patch.object(service, "now_ms", return_value=1000000):
+            normal = effective_control(snapshot, test_command)
+        self.assertEqual(normal["effectiveChargeVoltage"], 55.0)
+        self.assertEqual(normal["effectiveChargeCurrent"], 40.0)
+        self.assertEqual(normal["cerboMaxChargeVoltage"], 55.0)
+        self.assertEqual(normal["cerboMaxChargeCurrent"], 40.0)
+
+        active_command = {**test_command, "mode": "ACTIVE"}
+        with patch.object(service, "now_ms", return_value=1000000):
+            active = effective_control(snapshot, active_command)
+        self.assertEqual(active["effectiveChargeVoltage"], 55.0)
+        self.assertEqual(active["effectiveChargeCurrent"], 40.0)
+
+        high_ui_limit = {
+            **snapshot,
+            "chargeControlSettings": {
+                **snapshot["chargeControlSettings"],
+                "maxChargeCurrent": 400.0,
+            },
+            "limits": {**snapshot["limits"], "chargeCurrent": 200.0},
+        }
+        high_request = {**active_command, "requestedCurrent": 300.0}
+        with patch.object(service, "now_ms", return_value=1000000):
+            high = effective_control(high_ui_limit, high_request)
+        self.assertEqual(high["effectiveChargeCurrent"], 200.0)
 
     def test_effective_control_marks_zero_ccl_and_controller_inhibit(self):
         base = {

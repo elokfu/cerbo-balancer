@@ -119,6 +119,27 @@ def active_bms_selection(values: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def charge_control_settings(values: dict[str, Any]) -> dict[str, Any]:
+    """Normalize the read-only limits configured in the Cerbo GX UI.
+
+    Venus uses a positive maximum voltage to enable its managed-battery
+    voltage cap. The charge-current setting uses a negative value when its
+    system-wide limit is disabled, while zero remains a valid current limit.
+    """
+    voltage = values.get("MaxChargeVoltage")
+    current = values.get("MaxChargeCurrent")
+    voltage = float(voltage) if isinstance(voltage, (int, float)) else None
+    current = float(current) if isinstance(current, (int, float)) else None
+    return {
+        "source": "com.victronenergy.settings/Settings/SystemSetup",
+        "readbackValid": voltage is not None and current is not None,
+        "maxChargeVoltage": voltage,
+        "maxChargeCurrent": current,
+        "voltageLimitEnabled": voltage is not None and voltage > 0,
+        "currentLimitEnabled": current is not None and current >= 0,
+    }
+
+
 def decode_system_cell_location(value: Any) -> tuple[int | None, int | None]:
     """Decode Dyness CID2 61's packed ``0xCCBB`` cell/battery location."""
     if not isinstance(value, int) or not 0 <= value <= 0xFFFF:
@@ -665,6 +686,17 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
     bms_cvl = float(limits.get("chargeVoltage", 55.0)) if valid else None
     bms_ccl = max(0.0, float(limits.get("chargeCurrent", 0.0))) if valid else 0.0
     bms_dcl = abs(float(limits.get("dischargeCurrentSigned", 0.0))) if valid else 0.0
+    ui_settings = snapshot.get("chargeControlSettings") or {}
+    ui_voltage = ui_settings.get("maxChargeVoltage")
+    ui_current = ui_settings.get("maxChargeCurrent")
+    ui_voltage_cap = float(ui_voltage) if (
+        ui_settings.get("voltageLimitEnabled") is True
+        and isinstance(ui_voltage, (int, float))
+    ) else None
+    ui_current_cap = max(0.0, float(ui_current)) if (
+        ui_settings.get("currentLimitEnabled") is True
+        and isinstance(ui_current, (int, float))
+    ) else None
     factor = thermal_factor(snapshot) if valid else 1.0
     charge_blocked = status_flags.get("chargeEnabled") is False
     discharge_blocked = status_flags.get("dischargeEnabled") is False
@@ -686,11 +718,23 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
     # Invalid pack telemetry must remain charge-capable at the explicitly
     # requested conservative fallback. Valid master limits and permission are
     # still authoritative whenever they are available.
-    applied_voltage = requested_voltage if active_command_fresh else 55.2
-    applied_current = charge_request_current if active_command_fresh else 100.0
+    normal_voltage = ui_voltage_cap if ui_voltage_cap is not None else 55.2
+    normal_current = ui_current_cap if ui_current_cap is not None else 100.0
+    applied_voltage = requested_voltage if active_command_fresh else normal_voltage
+    applied_current = charge_request_current if active_command_fresh else normal_current
     applied_charge_enabled = controller_charge_enabled if active_command_fresh else True
-    effective_voltage = min(applied_voltage, bms_cvl, 56.5) if valid else 55.0
-    effective_current = min(applied_current, bms_ccl, 100.0) * factor if valid else 10.0
+    voltage_ceilings = [applied_voltage, bms_cvl, 56.5]
+    current_ceilings = [applied_current, bms_ccl]
+    if ui_voltage_cap is not None:
+        voltage_ceilings.append(ui_voltage_cap)
+    if ui_current_cap is not None:
+        current_ceilings.append(ui_current_cap)
+    else:
+        # Retain the old conservative ceiling only when the GX setting is not
+        # enabled or cannot be read. A valid UI limit replaces this fallback.
+        current_ceilings.append(100.0)
+    effective_voltage = min(voltage_ceilings) if valid else min(55.0, normal_voltage)
+    effective_current = min(current_ceilings) * factor if valid else min(10.0, normal_current)
     effective_charge_enabled = bool(
         (not valid) or
         (applied_charge_enabled and effective_current > 0 and
@@ -727,6 +771,10 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
         "bmsChargeVoltage": bms_cvl if valid else None,
         "bmsChargeCurrent": bms_ccl if valid else None,
         "bmsDischargeCurrent": bms_dcl if valid else None,
+        "cerboMaxChargeVoltage": ui_voltage,
+        "cerboMaxChargeCurrent": ui_current,
+        "cerboVoltageLimitEnabled": ui_settings.get("voltageLimitEnabled") is True,
+        "cerboCurrentLimitEnabled": ui_settings.get("currentLimitEnabled") is True,
         "effectiveChargeVoltage": effective_voltage,
         "effectiveChargeCurrent": effective_current,
         "effectiveDischargeCurrent": bms_dcl,
@@ -1368,9 +1416,26 @@ class DbusPublisher:
         except Exception:
             return active_bms_selection({})
 
+    def read_charge_control_settings(self) -> dict[str, Any]:
+        if not self.available:
+            return charge_control_settings({})
+        try:
+            values = {}
+            for key in ("MaxChargeVoltage", "MaxChargeCurrent"):
+                item = self.bus.get_object(
+                    "com.victronenergy.settings", f"/Settings/SystemSetup/{key}"
+                )
+                values[key] = item.GetValue(
+                    dbus_interface="com.victronenergy.BusItem"
+                )
+            return charge_control_settings(values)
+        except Exception:
+            return charge_control_settings({})
+
     def annotate_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
         value = dict(snapshot)
         value["activeBms"] = self.read_active_selection()
+        value["chargeControlSettings"] = self.read_charge_control_settings()
         return value
 
     def update(self, snapshot: dict[str, Any]) -> None:
@@ -1459,10 +1524,14 @@ def main() -> int:
     telemetry_store = RollingTelemetryStore(args.state_dir)
     while True:
         cycle_started = time.monotonic()
-        snapshot = poller.poll(store.read_json("cerbo-balancer-command.json"))
+        command = store.read_json("cerbo-balancer-command.json")
+        snapshot = dbus_publisher.annotate_snapshot(poller.poll(command))
+        # D-Bus UI limits are sampled after the serial poll and must be part of
+        # the same cycle's final virtual-BMS arbitration.
+        snapshot["effectiveControl"] = effective_control(snapshot, command)
         csv_logger.write(snapshot, store.read_json("cerbo-balancer-csv-logging.json"))
         store.write_json("cerbo-balancer-rs485-inventory.json", poller.export_inventory())
-        published_snapshot = telemetry_store.record(dbus_publisher.annotate_snapshot(snapshot))
+        published_snapshot = telemetry_store.record(snapshot)
         dbus_publisher.update(published_snapshot)
         print(json.dumps(published_snapshot, separators=(",", ":")), flush=True)
         if args.once:
