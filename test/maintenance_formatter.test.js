@@ -132,17 +132,27 @@ assert.equal(live.batteries[0].cellExtremaSource, 'addressed CID2 61')
 assert.equal(live.batteries[0].vminLocation, 'Battery 2 · Cell 11')
 
 const effectiveCells = (values) => values.map((voltage, index) => ({ index: index + 1, voltage }))
+const chargingStatus = {
+  available: true,
+  timestamp: 100000,
+  status2: { chargeMosfet: true },
+  status3: { effectiveCharging: true }
+}
 const unbalancedCounts = format({
   ...valid,
   batteries: [
     {
       address: 2,
       valid: true,
+      current: 1.5,
+      status44: chargingStatus,
       effectiveCells: effectiveCells([3.331, 3.302, 3.301, 3.300, ...Array(12).fill(3.331)])
     },
     {
       address: 3,
       valid: true,
+      current: 2.0,
+      status44: chargingStatus,
       effectiveCells: effectiveCells([3.500, 3.471, 3.470, 3.469, 3.469, ...Array(11).fill(3.500)])
     },
     {
@@ -167,6 +177,44 @@ assert.equal(unbalancedCounts.batteries[2].unbalancedCellCount, '—')
 assert.equal(unbalancedCounts.batteries[3].unbalancedCellCount, '—')
 assert.equal(unbalancedCounts.batteries[2].balancingCellCount, '—')
 assert.equal(unbalancedCounts.batteries[3].balancingCellCount, '—')
+
+const balancingCriteria = format({
+  ...valid,
+  batteries: [
+    {
+      address: 2,
+      valid: true,
+      current: 2.0,
+      status44: { ...chargingStatus, status2: { chargeMosfet: false } },
+      effectiveCells: effectiveCells([3.300, ...Array(15).fill(3.331)])
+    },
+    {
+      address: 3,
+      valid: true,
+      current: 2.0,
+      status44: { ...chargingStatus, status3: { effectiveCharging: false } },
+      effectiveCells: effectiveCells([3.300, ...Array(15).fill(3.331)])
+    },
+    {
+      address: 4,
+      valid: true,
+      current: 1.49,
+      status44: chargingStatus,
+      effectiveCells: effectiveCells([3.300, ...Array(15).fill(3.331)])
+    },
+    {
+      address: 5,
+      valid: true,
+      current: 2.0,
+      status44: { ...chargingStatus, timestamp: 89999 },
+      effectiveCells: effectiveCells([3.300, ...Array(15).fill(3.331)])
+    }
+  ]
+}, null, 100000)
+assert.deepEqual(Array.from(balancingCriteria.batteries, (battery) => battery.balancingCellCount), ['0', '0', '0', '0'])
+assert.deepEqual(Array.from(balancingCriteria.batteries, (battery) => battery.unbalancedCellCount), ['1', '1', '1', '1'])
+assert.equal(balancingCriteria.aggregate.balancingCellCount, '0')
+assert.equal(balancingCriteria.aggregate.unbalancedCellCount, '4')
 
 const packedCellId = format({
   ...valid,

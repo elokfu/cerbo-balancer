@@ -117,11 +117,18 @@ const batteries = (displaySnapshot.batteries || []).map((battery) => {
     const completeCellArray = battery.valid === true && cellValues.length === 16
     const batteryMaximumCellVoltage = completeCellArray ? Math.max(...cellValues) : null
     const batteryMinimumCellVoltage = completeCellArray ? Math.min(...cellValues) : null
+    const status44AgeMs = typeof battery.status44?.timestamp === 'number' ? Math.max(0, now - battery.status44.timestamp) : null
+    const status44Fresh = battery.status44?.available === true && status44AgeMs != null && status44AgeMs <= 10000
+    const chargeMosfetConnected = status44Fresh && battery.status44?.status2?.chargeMosfet === true
+    const effectiveCharging = status44Fresh && battery.status44?.status3?.effectiveCharging === true
+    const balancingConditionsMet = chargeMosfetConnected && effectiveCharging && typeof battery.current === 'number' && battery.current >= 1.5
     const unbalancedCellCount = completeCellArray
         ? cellValues.filter((value) => batteryMaximumCellVoltage - value > 0.030 + 1e-9).length
         : null
     const balancingCellCount = completeCellArray
-        ? cellValues.filter((value) => value - batteryMinimumCellVoltage > 0.030 + 1e-9).length
+        ? balancingConditionsMet
+            ? cellValues.filter((value) => value - batteryMinimumCellVoltage > 0.030 + 1e-9).length
+            : 0
         : null
     return {
         address: battery.address,
