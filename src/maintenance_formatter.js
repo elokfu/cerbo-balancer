@@ -115,9 +115,13 @@ const batteries = (displaySnapshot.batteries || []).map((battery) => {
     const cells = battery.effectiveCells || battery.effective_cells || []
     const cellValues = cells.map((cell) => cell.voltage).filter((value) => typeof value === 'number' && Number.isFinite(value))
     const completeCellArray = battery.valid === true && cellValues.length === 16
+    const batteryMaximumCellVoltage = completeCellArray ? Math.max(...cellValues) : null
     const batteryMinimumCellVoltage = completeCellArray ? Math.min(...cellValues) : null
     const unbalancedCellCount = completeCellArray
-        ? cellValues.filter((value) => value - batteryMinimumCellVoltage >= 0.030 - Number.EPSILON).length
+        ? cellValues.filter((value) => batteryMaximumCellVoltage - value > 0.030 + 1e-9).length
+        : null
+    const balancingCellCount = completeCellArray
+        ? cellValues.filter((value) => value - batteryMinimumCellVoltage > 0.030 + 1e-9).length
         : null
     return {
         address: battery.address,
@@ -138,6 +142,7 @@ const batteries = (displaySnapshot.batteries || []).map((battery) => {
         cellExtremaSource: 'addressed CID2 61',
         diagnosticCellSpread: cellValues.length ? number(Math.max(...cellValues) - Math.min(...cellValues)) : '—',
         unbalancedCellCount: unbalancedCellCount == null ? '—' : String(unbalancedCellCount),
+        balancingCellCount: balancingCellCount == null ? '—' : String(balancingCellCount),
         cells: cells.map((cell) => ({ index: cell.index, voltage: number(cell.voltage) })),
         temperatures: (battery.temperatures || []).map((value, index) => ({ index: index + 1, value: number(value, 1) })),
         minimumTemperature: number(battery.minimumTemperature ?? battery.minimum_temperature, 1),
@@ -154,6 +159,10 @@ const batteries = (displaySnapshot.batteries || []).map((battery) => {
 const completeBatteries = batteries.filter((battery) => battery.unbalancedCellCount !== '—')
 const totalUnbalancedCellCount = completeBatteries.length
     ? String(completeBatteries.reduce((sum, battery) => sum + Number(battery.unbalancedCellCount), 0))
+    : '—'
+const balancingCompleteBatteries = batteries.filter((battery) => battery.balancingCellCount !== '—')
+const totalBalancingCellCount = balancingCompleteBatteries.length
+    ? String(balancingCompleteBatteries.reduce((sum, battery) => sum + Number(battery.balancingCellCount), 0))
     : '—'
 
 const sourceBatteries = displaySnapshot.batteries || []
@@ -276,6 +285,7 @@ msg.payload = {
         vmax: number(aggregate.vmax),
         spread: number((aggregate.spread || 0) * 1000, 1),
         unbalancedCellCount: totalUnbalancedCellCount,
+        balancingCellCount: totalBalancingCellCount,
         min: `${aggregate.minCellAddress ?? '—'} / cell ${aggregate.minCellIndex ?? '—'}`,
         max: `${aggregate.maxCellAddress ?? '—'} / cell ${aggregate.maxCellIndex ?? '—'}`,
         current: number(aggregate.summedBatteryCurrent, 1),

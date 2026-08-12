@@ -138,12 +138,12 @@ const unbalancedCounts = format({
     {
       address: 2,
       valid: true,
-      effectiveCells: effectiveCells([3.300, 3.330, 3.331, ...Array(13).fill(3.300)])
+      effectiveCells: effectiveCells([3.331, 3.302, 3.301, 3.300, ...Array(12).fill(3.331)])
     },
     {
       address: 3,
       valid: true,
-      effectiveCells: effectiveCells([3.200, 3.230, 3.231, ...Array(13).fill(3.200)])
+      effectiveCells: effectiveCells([3.500, 3.471, 3.470, 3.469, 3.469, ...Array(11).fill(3.500)])
     },
     {
       address: 4,
@@ -157,11 +157,16 @@ const unbalancedCounts = format({
     }
   ]
 }, null, 100000)
-assert.equal(unbalancedCounts.aggregate.unbalancedCellCount, '4')
-assert.equal(unbalancedCounts.batteries[0].unbalancedCellCount, '2')
+assert.equal(unbalancedCounts.aggregate.unbalancedCellCount, '3')
+assert.equal(unbalancedCounts.aggregate.balancingCellCount, '25')
+assert.equal(unbalancedCounts.batteries[0].unbalancedCellCount, '1')
 assert.equal(unbalancedCounts.batteries[1].unbalancedCellCount, '2')
+assert.equal(unbalancedCounts.batteries[0].balancingCellCount, '13')
+assert.equal(unbalancedCounts.batteries[1].balancingCellCount, '12')
 assert.equal(unbalancedCounts.batteries[2].unbalancedCellCount, '—')
 assert.equal(unbalancedCounts.batteries[3].unbalancedCellCount, '—')
+assert.equal(unbalancedCounts.batteries[2].balancingCellCount, '—')
+assert.equal(unbalancedCounts.batteries[3].balancingCellCount, '—')
 
 const packedCellId = format({
   ...valid,
