@@ -1512,8 +1512,13 @@ def main() -> int:
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
     store = JsonlStore(args.state_dir)
-    store.ensure_json("cerbo-balancer-config.json", {"mode": "TEST", "enabled": False})
-    store.ensure_json("cerbo-balancer-state.json", {"version": 1, "state": "NORMAL", "mode": "TEST"})
+    store.ensure_json("cerbo-balancer-config.json", {"mode": "TEST", "automaticBalancingEnabled": True})
+    store.ensure_json("cerbo-balancer-state.json", {
+        "version": 4,
+        "state": "NORMAL",
+        "mode": "TEST",
+        "automaticBalancingEnabled": True,
+    })
     store.ensure_json("cerbo-balancer-command.json", {"version": 0, "mode": "TEST"})
     store.ensure_json("cerbo-balancer-csv-logging.json", {"enabled": False, "filename": None})
     store.ensure_json("cerbo-balancer-rs485-inventory.json", {"version": 1, "activeAddresses": [], "pendingRemoval": [], "lastSeenAt": {}})

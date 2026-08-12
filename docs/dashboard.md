@@ -56,6 +56,18 @@ terms, and solar-limited pause counters. It controls selected-battery current
 toward 2 A through aggregate DVCC current allowance without assuming equal
 parallel current sharing.
 
+`Automatic balancing` is the only balancing on/off control and defaults to ON
+after a fresh/reset state or Restore Defaults. ON automatically selects the
+first eligible battery. OFF releases selection, resets feed-forward and PI,
+and holds `NORMAL` while requesting the Cerbo Charge Control voltage/current;
+it does not disable charging. Reset Control clears controller terms without
+changing the switch. Ordinary restarts preserve the persisted switch value.
+
+TEST/ACTIVE is independent of automatic selection. TEST performs shadow
+arbitration, while ACTIVE permits commands only through a manually selected
+and verified RS485 virtual BMS. The Cerbo battery-monitor menu remains the only
+selector between the RS485 virtual BMS and the Dyness CAN BMS.
+
 The controller page also reports the active Cerbo BMS source and DeviceInstance
 (`CAN Dyness BMS active`, instance `512`, or `RS485 virtual BMS active`,
 instance `100`). Its Virtual BMS / DVCC panel separates requested values from
@@ -78,7 +90,3 @@ but performs no charger or voltage write and does not require output readback.
 ACTIVE remains rejected unless fresh complete telemetry, valid configuration,
 and verified output readback are present; physical activation additionally
 requires the documented DVCC commissioning approval.
-
-Mode starts at `TEST`. The ACTIVE control is intentionally rejected unless
-cell telemetry and output readback are verified. TEST commands are diagnostic
-intent only; no physical charger or voltage setting is changed.

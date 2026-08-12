@@ -12,7 +12,7 @@ from datetime import date
 from pathlib import Path
 
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
@@ -172,19 +172,44 @@ class UmlDiagram(Flowable):
             c.drawCentredString(x + w / 2, text_y, line)
             text_y -= 8
 
-    def _note(self, c, x, y, w, text, color=SLATE):
-        c.setFillColor(color)
-        c.setFont("Helvetica", 6.3)
-        c.drawCentredString(x + w / 2, y, text)
+    def _label(
+        self, c, x, y, w, text, color=SLATE, align="center",
+        background=None, padding=2, vertical=False,
+    ):
+        alignment = {"left": TA_LEFT, "right": TA_RIGHT}.get(align, TA_CENTER)
+        style = ParagraphStyle(
+            "DiagramLabel", parent=S["small"], fontName="Helvetica",
+            fontSize=6.2, leading=7.3, textColor=color, alignment=alignment,
+        )
+        paragraph = Paragraph(text.replace("\n", "<br/>"), style)
+        available_width = w - 2 * padding
+        pw, ph = paragraph.wrap(available_width, 80)
+        box_height = ph + 2 * padding
+        if vertical:
+            c.saveState()
+            c.translate(x, y)
+            c.rotate(90)
+            if background is not None:
+                c.setFillColor(background)
+                c.roundRect(-padding, -padding, pw + 2 * padding, box_height, 2, fill=1, stroke=0)
+            paragraph.drawOn(c, 0, 0)
+            c.restoreState()
+            return box_height
+        if background is not None:
+            c.saveState()
+            c.setFillColor(background)
+            c.roundRect(x, y, w, box_height, 2, fill=1, stroke=0)
+            c.restoreState()
+        paragraph.drawOn(c, x + padding, y + padding)
+        return box_height
 
-    def _arrow(self, c, x1, y1, x2, y2, label=None, color=SLATE, dashed=False):
+    def _note(self, c, x, y, w, text, color=SLATE, align="center"):
+        return self._label(c, x, y, w, text, color, align)
+
+    def _arrowhead(self, c, x1, y1, x2, y2, color=SLATE):
         c.saveState()
         c.setStrokeColor(color)
         c.setFillColor(color)
-        c.setLineWidth(1)
-        if dashed:
-            c.setDash(3, 2)
-        c.line(x1, y1, x2, y2)
         dx, dy = x2 - x1, y2 - y1
         length = max((dx * dx + dy * dy) ** 0.5, 1)
         ux, uy = dx / length, dy / length
@@ -193,8 +218,53 @@ class UmlDiagram(Flowable):
         c.line(x2, y2, x2 - size * ux + size * 0.55 * px, y2 - size * uy + size * 0.55 * py)
         c.line(x2, y2, x2 - size * ux - size * 0.55 * px, y2 - size * uy - size * 0.55 * py)
         c.restoreState()
+
+    def _arrow(
+        self, c, x1, y1, x2, y2, label=None, color=SLATE, dashed=False,
+        label_x=None, label_y=None, label_width=80, label_align="center",
+        label_background=colors.white,
+    ):
+        c.saveState()
+        c.setStrokeColor(color)
+        c.setFillColor(color)
+        c.setLineWidth(1)
+        if dashed:
+            c.setDash(3, 2)
+        c.line(x1, y1, x2, y2)
+        c.restoreState()
+        self._arrowhead(c, x1, y1, x2, y2, color)
         if label:
-            self._note(c, (x1 + x2) / 2 - 25, (y1 + y2) / 2 + 4, 50, label, color)
+            if label_x is None:
+                label_x = (x1 + x2) / 2 - label_width / 2
+            if label_y is None:
+                label_y = (y1 + y2) / 2 + 5
+            self._label(
+                c, label_x, label_y, label_width, label, color,
+                label_align, label_background,
+            )
+
+    def _poly_arrow(
+        self, c, points, label=None, color=SLATE, dashed=False,
+        label_x=None, label_y=None, label_width=100, label_align="center",
+        label_background=colors.white,
+    ):
+        c.saveState()
+        c.setStrokeColor(color)
+        c.setLineWidth(1)
+        if dashed:
+            c.setDash(3, 2)
+        path = c.beginPath()
+        path.moveTo(*points[0])
+        for point in points[1:]:
+            path.lineTo(*point)
+        c.drawPath(path, fill=0, stroke=1)
+        c.restoreState()
+        self._arrowhead(c, *points[-2], *points[-1], color)
+        if label:
+            self._label(
+                c, label_x, label_y, label_width, label, color,
+                label_align, label_background,
+            )
 
     def _lifeline(self, c, x, title, subtitle):
         self._box(c, x - 39, self.height - 42, 78, 27, title, (subtitle,), PALE_BLUE, BLUE)
@@ -213,23 +283,31 @@ class UmlDiagram(Flowable):
             self._box(c, 376, 135, 108, 48, "Virtual BMS", ("D-Bus instance 100", "effective arbitration"), PALE_BLUE, BLUE)
             self._box(c, 190, 48, 108, 48, "Cerbo DVCC", ("manual BMS selection", "system-wide limits"), PALE_AMBER, AMBER)
             self._box(c, 326, 48, 128, 48, "MPPTs + MultiPlus", ("managed chargers", "actual charging"), PALE_AMBER, AMBER)
-            self._arrow(c, 112, 159, 128, 159, "RS485")
-            self._arrow(c, 236, 159, 252, 159, "snapshot")
-            self._arrow(c, 360, 159, 376, 159, "command")
-            self._arrow(c, 430, 135, 298, 96, "D-Bus limits")
-            self._arrow(c, 298, 72, 326, 72, "DVCC")
-            self._arrow(c, 190, 96, 160, 135, "GX settings", dashed=True)
+            self._arrow(c, 112, 159, 128, 159, "RS485", label_x=105, label_y=170, label_width=30)
+            self._arrow(c, 236, 159, 252, 159, "snapshot", label_x=224, label_y=170, label_width=40)
+            self._arrow(c, 360, 159, 376, 159, "command", label_x=347, label_y=170, label_width=43)
+            self._arrow(c, 430, 135, 298, 96, "D-Bus limits", label_x=338, label_y=106, label_width=58)
+            self._arrow(c, 298, 72, 326, 72, "DVCC", label_x=296, label_y=80, label_width=34)
+            self._arrow(c, 190, 96, 160, 135, "GX settings", dashed=True, label_x=150, label_y=102, label_width=48)
             self._note(c, 4, 15, 484, "Arrows show data/control direction. The service never writes Dyness RS485, Cerbo charge-control settings, or device-specific charger paths.")
         elif self.kind == "states":
-            self._box(c, 12, 118, 130, 58, "NORMAL", ("Cerbo UI CVL/CCL", "select first eligible pack"), PALE_BLUE, BLUE)
-            self._box(c, 182, 118, 130, 58, "BALANCING", ("target selected pack 2 A", "feed-forward + slow PI"), PALE_GREEN, GREEN)
-            self._box(c, 352, 118, 130, 58, "SAFETY_STOP", ("55 V / 10 A request", "release selection + reset PI"), PALE_RED, RED)
-            self._arrow(c, 142, 147, 182, 147, "eligible pack")
-            self._arrow(c, 312, 147, 352, 147, "stale/incomplete telemetry\nor output failure", RED)
-            self._arrow(c, 352, 128, 142, 128, "fresh telemetry recovered", GREEN)
-            self._arrow(c, 247, 118, 77, 84, "full SOC latch, discharge completion,\nno candidate, manual stop")
-            self._arrow(c, 77, 84, 77, 118, None)
-            self._note(c, 4, 35, 478, "Selected battery MOSFET OFF or local protection: release only that battery, then reselect another eligible battery. Non-selected interruptions do not disable parallel charging.")
+            self._box(c, 12, 112, 130, 54, "NORMAL", ("Cerbo UI CVL/CCL", "automatic selection when ON"), PALE_BLUE, BLUE)
+            self._box(c, 182, 112, 130, 54, "BALANCING", ("target selected pack 2 A", "feed-forward + slow PI"), PALE_GREEN, GREEN)
+            self._box(c, 352, 112, 130, 54, "SAFETY_STOP", ("55 V / 10 A request", "release selection + reset PI"), PALE_RED, RED)
+            self._poly_arrow(c, [(142, 150), (162, 150), (162, 150), (182, 150)],
+                             "Automatic ON\neligible battery found", label_x=137, label_y=171, label_width=51)
+            self._poly_arrow(c, [(312, 150), (332, 150), (332, 150), (352, 150)],
+                             "Stale/incomplete telemetry\nor output failure", RED,
+                             label_x=308, label_y=171, label_width=58)
+            self._poly_arrow(c, [(417, 112), (417, 92), (77, 92), (77, 112)],
+                             "Telemetry and output\ncontrol recovered", GREEN,
+                             label_x=212, label_y=72, label_width=86)
+            self._poly_arrow(c, [(247, 112), (247, 54), (77, 54), (77, 112)],
+                             "Full-SOC completion\ndischarge completion\nno eligible replacement",
+                             label_x=116, label_y=28, label_width=92)
+            self._poly_arrow(c, [(247, 112), (247, 18), (28, 18), (28, 112)],
+                             "Automatic balancing OFF\nrelease selection and return to NORMAL",
+                             label_x=37, label_y=1, label_width=132, label_align="left")
         elif self.kind == "control":
             self._box(c, 12, 132, 104, 48, "New 8 s telemetry", ("selected current", "positive total current"), PALE_BLUE, BLUE)
             self._box(c, 142, 132, 104, 48, "Share estimate", ("Iselected / Itotal", "EWMA alpha = 0.20"), PALE_BLUE, BLUE)
@@ -240,8 +318,8 @@ class UmlDiagram(Flowable):
             self._arrow(c, 116, 156, 142, 156)
             self._arrow(c, 246, 156, 272, 156)
             self._arrow(c, 376, 156, 402, 156)
-            self._arrow(c, 454, 132, 290, 98, "request")
-            self._arrow(c, 310, 74, 370, 74, "candidate CCL")
+            self._arrow(c, 454, 132, 290, 98, "request", label_x=354, label_y=108, label_width=44)
+            self._arrow(c, 310, 74, 370, 74, "candidate CCL", label_x=312, label_y=82, label_width=56)
             self._note(c, 8, 20, 530, "Freeze PI/feed-forward when BMS-limited, CCL is zero, permission is off, selected current is non-positive, thermal derating applies, or solar-limited pause is active.")
         elif self.kind == "arbitration":
             xs = [48, 150, 252, 354, 456]
@@ -249,43 +327,55 @@ class UmlDiagram(Flowable):
             for x, (title, sub) in zip(xs, labels):
                 self._lifeline(c, x, title, sub)
             steps = [
-                (165, 0, 1, "request CVL/CCL + mode"),
-                (140, 2, 1, "read MaxChargeVoltage / Current"),
-                (115, 3, 1, "read RS485 limits + permissions"),
-                (90, 1, 4, "publish effective CVL/CCL/DCL"),
-                (65, 4, 0, "readback: requested vs effective"),
+                (145, 0, 1, "request CVL/CCL + mode"),
+                (121, 2, 1, "read MaxChargeVoltage / Current"),
+                (97, 3, 1, "read RS485 limits + permissions"),
+                (73, 1, 4, "publish effective CVL/CCL/DCL"),
+                (49, 4, 0, "readback: requested vs effective"),
             ]
             for y, left, right, label in steps:
-                self._arrow(c, xs[left], y, xs[right], y, label, BLUE)
-            self._note(c, 4, 18, 484, "effectiveCVL = min(request, Dyness CVL, enabled Cerbo UI CVL, 56.5 V); effectiveCCL = min(request, Dyness CCL, enabled UI CCL) * thermal factor.")
+                low, high = sorted((xs[left], xs[right]))
+                width = min(112, max(72, high - low - 8))
+                self._arrow(c, xs[left], y, xs[right], y, label, BLUE,
+                            label_x=(low + high - width) / 2, label_y=y + 3,
+                            label_width=width)
+            self._note(c, 4, 12, 484, "effectiveCVL = min(request, Dyness CVL, enabled Cerbo UI CVL, 56.5 V); effectiveCCL = min(request, Dyness CCL, enabled UI CCL) * thermal factor.")
         elif self.kind == "telemetry":
             xs = [48, 150, 252, 354, 456]
             labels = [("Poller", "persistent serial"), ("Dyness B3", "addressed pack"), ("Validator", "framing/range"), ("Inventory", "expected packs"), ("Publisher", "snapshot + D-Bus")]
             for x, (title, sub) in zip(xs, labels):
                 self._lifeline(c, x, title, sub)
             steps = [
-                (166, 0, 1, "CID2 61 / 63"),
-                (145, 1, 0, "system summary + limits"),
-                (124, 0, 1, "CID2 42 / 44"),
-                (103, 1, 0, "cells, temperatures, status"),
-                (82, 0, 2, "validate + construct 16 cells"),
-                (61, 2, 3, "complete/inventory status"),
-                (40, 3, 4, "fresh parsed snapshot"),
+                (145, 0, 1, "CID2 61 / 63"),
+                (126, 1, 0, "system summary + limits"),
+                (107, 0, 1, "CID2 42 / 44"),
+                (88, 1, 0, "cells, temperatures, status"),
+                (69, 0, 2, "validate + construct 16 cells"),
+                (50, 2, 3, "complete/inventory status"),
+                (31, 3, 4, "fresh parsed snapshot"),
             ]
             for y, left, right, label in steps:
-                self._arrow(c, xs[left], y, xs[right], y, label, TEAL)
-            self._note(c, 4, 18, 484, "Normal discovery scans 2-16 every 60 s. A missing known pack triggers 10 s recovery scans and is removed only after 10 failed complete scans.")
+                low, high = sorted((xs[left], xs[right]))
+                width = min(128, max(72, high - low - 8))
+                self._arrow(c, xs[left], y, xs[right], y, label, TEAL,
+                            label_x=(low + high - width) / 2, label_y=y + 2,
+                            label_width=width)
+            self._note(c, 4, 7, 484, "Normal discovery scans 2-16 every 60 s. A missing known pack triggers 10 s recovery scans and is removed only after 10 failed complete scans.")
         elif self.kind == "completion":
-            self._box(c, 10, 135, 112, 43, "BALANCING", ("selection held",), PALE_GREEN, GREEN)
-            self._box(c, 158, 135, 142, 43, "All expected SOC = 100", ("set completion latch", "reset PI / release"), PALE_BLUE, BLUE)
-            self._box(c, 344, 135, 112, 43, "NORMAL", ("wait for rearm",), PALE_BLUE, BLUE)
-            self._arrow(c, 122, 156, 158, 156, "all integers 100")
-            self._arrow(c, 300, 156, 344, 156, "normal UI command")
-            self._arrow(c, 400, 135, 66, 72, "permission OFF, then ON\nfor 5 seconds", TEAL)
-            self._arrow(c, 66, 72, 66, 135, "rearmed")
-            self._box(c, 155, 35, 150, 48, "Alternative completion", ("effective discharging = ON", "SOC < 100 and spread < 30 mV"), PALE_AMBER, AMBER)
-            self._arrow(c, 66, 135, 230, 83, "selected pack only", AMBER)
-            self._arrow(c, 305, 59, 344, 135, "release; no latch", AMBER)
+            self._box(c, 196, 148, 128, 38, "BALANCING", ("selection held",), PALE_GREEN, GREEN)
+            self._box(c, 186, 83, 148, 43, "All expected SOC = 100", ("set completion latch", "reset PI / release"), PALE_BLUE, BLUE)
+            self._box(c, 196, 18, 128, 40, "NORMAL", ("completion latch set",), PALE_BLUE, BLUE)
+            self._arrow(c, 260, 148, 260, 126, "All integer SOC values\nare 100", label_x=270, label_y=128, label_width=76, label_align="left")
+            self._arrow(c, 260, 83, 260, 58, "Release selection\nnormal UI command", label_x=270, label_y=61, label_width=76, label_align="left")
+            self._poly_arrow(c, [(324, 38), (436, 38), (436, 168), (324, 168)],
+                             "Permission observed OFF\nthen ON continuously for 5 s\nrearm automatic selection",
+                             TEAL, label_x=350, label_y=90, label_width=82, label_align="left")
+            self._box(c, 12, 78, 142, 48, "Alternative completion", ("effective discharging = ON", "SOC < 100 and spread < 30 mV"), PALE_AMBER, AMBER)
+            self._poly_arrow(c, [(196, 167), (84, 167), (84, 126)],
+                             "Selected battery only", AMBER, label_x=92, label_y=143, label_width=82)
+            self._poly_arrow(c, [(84, 78), (84, 38), (196, 38)],
+                             "Release selection\nno completion latch", AMBER,
+                             label_x=92, label_y=43, label_width=82, label_align="left")
         elif self.kind == "csv":
             self._box(c, 4, 130, 108, 52, "Start CSV logging", ("validate filename", "capture initial inventory"), PALE_BLUE, BLUE)
             self._box(c, 126, 130, 108, 52, "Create metadata", ("# schema + status legend", "single header row"), PALE_BLUE, BLUE)
@@ -294,8 +384,8 @@ class UmlDiagram(Flowable):
             self._box(c, 176, 48, 144, 52, "Stop recording", ("initial pack disappears", "or user stops session"), PALE_RED, RED)
             self._arrow(c, 112, 156, 126, 156)
             self._arrow(c, 234, 156, 248, 156)
-            self._arrow(c, 356, 156, 370, 156, "service restart")
-            self._arrow(c, 302, 130, 248, 100, "missing initial battery", RED)
+            self._arrow(c, 356, 156, 370, 156, "service restart", label_x=340, label_y=187, label_width=48)
+            self._arrow(c, 302, 130, 248, 100, "missing initial battery", RED, label_x=257, label_y=108, label_width=72)
             self._note(c, 4, 18, 474, "Batteries added after recording starts are ignored. An existing file is appended only when its generated header matches the session schema.")
         else:
             c.setFillColor(RED)
@@ -398,8 +488,8 @@ def build() -> Path:
         p("Figure 3 - Main controller state transitions.", "small"),
         table([
             ["State", "Operation", "Entry and exit"],
-            ["NORMAL", "Publish normal Cerbo UI charge limits and seek the first eligible battery in ascending address order.", "Enter on disabled controller, no candidate, normal completion, manual stop, or safety recovery. Enter BALANCING when a candidate is selected."],
-            ["BALANCING", "Hold the selected battery, target its measured current near 2.0 A, and adjust only aggregate CCL.", "Exit to NORMAL on full-SOC completion, discharge completion, manual stop, or no replacement candidate. Enter SAFETY_STOP on telemetry/output failure."],
+            ["NORMAL", "Publish normal Cerbo UI charge limits. When Automatic balancing is ON, seek the first eligible battery in ascending address order.", "Remain here while Automatic balancing is OFF or no candidate exists. Enter BALANCING automatically when ON and a candidate is selected."],
+            ["BALANCING", "Hold the selected battery, target its measured current near 2.0 A, and adjust only aggregate CCL.", "Exit to NORMAL on full-SOC completion, discharge completion, Automatic balancing OFF, or no replacement candidate. Enter SAFETY_STOP on telemetry/output failure."],
             ["SAFETY_STOP", "Release selection and reset control; request conservative 55.0 V / 10.0 A while retaining charge-capable fallback semantics.", "Enter on stale/incomplete telemetry, invalid configuration, or output-readback failure. Return to NORMAL only after required telemetry/control checks recover."],
         ], [29 * mm, 68 * mm, 81 * mm]),
         p("Eligibility and selection", "h2"),
@@ -460,10 +550,11 @@ def build() -> Path:
         p("Operator controls", "h2"),
         table([
             ["Control", "Effect"],
-            ["Enable / Disable", "Enable permits normal evaluation; disable releases selection, resets control, and restores NORMAL output."],
+            ["Automatic balancing", "Defaults ON after a fresh/reset state or Restore Defaults. ON selects eligible batteries automatically. OFF releases selection, resets control, and holds NORMAL using Cerbo Charge Control limits without disabling charging."],
             ["TEST / ACTIVE", "ACTIVE requires virtual BMS selected manually in Cerbo, output readback verified, and valid configuration. TEST remains shadow mode."],
-            ["Start / Stop balancing", "Start selects an eligible battery, optionally chosen manually; stop releases selection and resets PI without disabling charging."],
-            ["Reset control", "Clears share, feed-forward, integral, solar-pause counters, and returns aggregate request to fallback."],
+            ["Cerbo BMS selection", "The Cerbo battery-monitor setting manually selects RS485 virtual BMS or normal Dyness CAN BMS. The balancer never changes it."],
+            ["Reset control", "Clears share, feed-forward, integral, and solar-pause counters without changing Automatic balancing ON/OFF."],
+            ["Restore Defaults", "Restores controller configuration, clears session/controller state, and turns Automatic balancing ON."],
             ["Configuration", "Validates thresholds, bounds, gains, slew, and timing before replacing active controller settings."],
             ["CSV logging", "Starts/stops a fixed-inventory file under /data/home/nodered/cerbo-balancer-csv/."],
         ], [48 * mm, 130 * mm]),

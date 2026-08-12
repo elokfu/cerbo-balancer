@@ -7,6 +7,7 @@ const STATES = Object.freeze({
 })
 
 const MODES = Object.freeze({ TEST: 'TEST', ACTIVE: 'ACTIVE' })
+const CONTROLLER_VERSION = 4
 
 const DEFAULT_CONFIG = Object.freeze({
   balancingVoltageCeiling: 56.5,
@@ -36,11 +37,10 @@ function clamp (value, minimum, maximum) { return Math.max(minimum, Math.min(max
 
 function emptyState () {
   return {
-    version: 3,
+    version: CONTROLLER_VERSION,
     state: STATES.NORMAL,
     mode: MODES.TEST,
-    enabled: false,
-    autoManualMode: 'AUTO',
+    automaticBalancingEnabled: true,
     selectedAddress: null,
     selectedReason: null,
     completionLatched: false,
@@ -144,13 +144,22 @@ function createBalancerController (options = {}) {
   }
 
   function migrateState (persisted = {}) {
-    const migrated = { ...emptyState(), mode: persisted.mode || MODES.TEST, enabled: persisted.enabled === true }
-    migrated.autoManualMode = persisted.autoManualMode === 'MANUAL' ? 'MANUAL' : 'AUTO'
+    const migrated = { ...emptyState(), mode: persisted.mode || MODES.TEST }
+    if (typeof persisted.automaticBalancingEnabled === 'boolean') {
+      migrated.automaticBalancingEnabled = persisted.automaticBalancingEnabled
+    } else if (typeof persisted.enabled === 'boolean') {
+      migrated.automaticBalancingEnabled = persisted.enabled
+    }
     migrated.csvLogging = persisted.csvLogging || migrated.csvLogging
-    migrated.completionLatched = persisted.version === 3 && persisted.completionLatched === true
-    migrated.permissionOffSeen = persisted.version === 3 && persisted.permissionOffSeen === true
-    if (persisted.version === 3 && Object.values(STATES).includes(persisted.state)) {
-      Object.assign(migrated, persisted)
+    migrated.completionLatched = [3, CONTROLLER_VERSION].includes(persisted.version) && persisted.completionLatched === true
+    migrated.permissionOffSeen = [3, CONTROLLER_VERSION].includes(persisted.version) && persisted.permissionOffSeen === true
+    if ([3, CONTROLLER_VERSION].includes(persisted.version) && Object.values(STATES).includes(persisted.state)) {
+      const { enabled, autoManualMode, ...current } = persisted
+      Object.assign(migrated, current)
+      migrated.version = CONTROLLER_VERSION
+      if (typeof persisted.automaticBalancingEnabled !== 'boolean' && typeof enabled === 'boolean') {
+        migrated.automaticBalancingEnabled = enabled
+      }
       return migrated
     }
     const oldActive = [
@@ -412,12 +421,12 @@ function createBalancerController (options = {}) {
     const health = freshTelemetry(timestamp)
     let command = normalCommand('NORMAL_POLICY')
 
-    if (!state.enabled) {
+    if (!state.automaticBalancingEnabled) {
       state.fault = null
       resetControl()
       releaseSelection()
-      transition(STATES.NORMAL, timestamp, 'controller disabled')
-      command = normalCommand('CONTROLLER_DISABLED')
+      transition(STATES.NORMAL, timestamp, 'automatic balancing disabled')
+      command = normalCommand('AUTOMATIC_BALANCING_OFF')
     } else if (state.mode === MODES.ACTIVE && !virtualBmsSelected()) {
       state.fault = null
       resetControl()
@@ -521,8 +530,7 @@ function createBalancerController (options = {}) {
     return {
       state: state.state,
       mode: state.mode,
-      enabled: state.enabled,
-      autoManualMode: state.autoManualMode,
+      automaticBalancingEnabled: state.automaticBalancingEnabled,
       selectedAddress: state.selectedAddress,
       selectedReason: state.selectedReason,
       lastStopReason: state.lastStopReason,
@@ -566,7 +574,7 @@ function createBalancerController (options = {}) {
   function handle (message = {}) {
     const timestamp = finite(message.timestamp) ? message.timestamp : now()
     if (message.type === 'load') {
-      const currentVersion = message.state && message.state.version === 3
+      const currentVersion = message.state && [3, CONTROLLER_VERSION].includes(message.state.version)
       state = migrateState(message.state || {})
       const validated = validateConfig(currentVersion ? (message.config || {}) : {})
       config = validated.config
@@ -586,13 +594,13 @@ function createBalancerController (options = {}) {
       outputReady = message.value === true
       return evaluate(timestamp)
     }
-    if (message.type === 'set_enabled') {
-      state.enabled = message.value === true
-      if (!state.enabled) {
+    if (message.type === 'set_automatic_balancing') {
+      state.automaticBalancingEnabled = message.value === true
+      if (!state.automaticBalancingEnabled) {
         state.fault = null
         resetControl()
         releaseSelection()
-        transition(STATES.NORMAL, timestamp, 'controller disabled')
+        transition(STATES.NORMAL, timestamp, 'automatic balancing disabled')
       }
       return evaluate(timestamp)
     }
@@ -600,10 +608,6 @@ function createBalancerController (options = {}) {
       if (message.value === MODES.ACTIVE && outputReady && virtualBmsSelected() && validateConfig(config).valid) state.mode = MODES.ACTIVE
       else if (message.value === MODES.TEST) state.mode = MODES.TEST
       else record(timestamp, 'mode_rejected', 'ACTIVE requires selected virtual BMS, verified output, and valid configuration')
-      return evaluate(timestamp)
-    }
-    if (message.type === 'set_auto_manual' && ['AUTO', 'MANUAL'].includes(message.value)) {
-      state.autoManualMode = message.value
       return evaluate(timestamp)
     }
     if (message.type === 'set_csv_logging') {
@@ -617,23 +621,23 @@ function createBalancerController (options = {}) {
       pendingCsvLogging = { ...state.csvLogging, timestamp }
       return evaluate(timestamp)
     }
-    if (message.type === 'manual_start') {
-      state.autoManualMode = 'MANUAL'
-      if (state.completionLatched) record(timestamp, 'manual_start_rejected', 'full-SOC completion latch is active')
-      else if (!selectCandidate(timestamp, null, message.address == null ? null : Number(message.address))) {
-        record(timestamp, 'manual_start_rejected', 'no battery meets mandatory telemetry, spread, MOSFET, and protection eligibility')
-      }
-      return evaluate(timestamp)
-    }
-    if (message.type === 'manual_stop') {
-      resetControl()
-      releaseSelection()
-      transition(STATES.NORMAL, timestamp, 'manual balancing stop')
-      return evaluate(timestamp)
-    }
     if (message.type === 'reset_integrator') {
       resetControl()
       record(timestamp, 'integrator_reset', 'operator reset')
+      return evaluate(timestamp)
+    }
+    if (message.type === 'restore_defaults') {
+      config = { ...DEFAULT_CONFIG }
+      state.automaticBalancingEnabled = true
+      state.completionLatched = false
+      state.permissionOffSeen = false
+      state.permissionOnStartedAt = null
+      state.lastStopReason = null
+      state.fault = null
+      resetControl()
+      releaseSelection()
+      transition(STATES.NORMAL, timestamp, 'controller defaults restored')
+      record(timestamp, 'defaults_restored', 'automatic balancing enabled and controller defaults restored')
       return evaluate(timestamp)
     }
     if (message.type === 'configure') {
@@ -654,4 +658,4 @@ function createBalancerController (options = {}) {
   }
 }
 
-module.exports = { STATES, MODES, DEFAULT_CONFIG, validateConfig, createBalancerController }
+module.exports = { STATES, MODES, CONTROLLER_VERSION, DEFAULT_CONFIG, validateConfig, createBalancerController }

@@ -4,6 +4,17 @@
 is selected manually in Cerbo and output readback is verified.
 
 The controller uses three states: `NORMAL`, `BALANCING`, and `SAFETY_STOP`.
+Automatic balancing defaults to ON after a fresh state or Restore Defaults.
+When it is ON, the first eligible battery is selected automatically; there is
+no separate Start command. Turning it OFF releases the selection, resets the
+current controller, and keeps the state in `NORMAL` using the Cerbo Charge
+Control voltage and current. It does not disable charging.
+
+The Cerbo battery-monitor setting remains the only selector between the RS485
+virtual BMS and normal Dyness CAN BMS. `TEST`/`ACTIVE` controls whether the
+calculated request can be applied through the selected virtual BMS; it does not
+change the selected BMS source.
+
 It selects the first battery in address order whose addressed CID2 `0x61`
 spread is strictly above 30 mV and controls aggregate charge allowance so that
 battery receives approximately 2 A. CID2 `0x42` cells remain visible but do

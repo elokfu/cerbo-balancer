@@ -1,7 +1,7 @@
 'use strict'
 
 const assert = require('assert/strict')
-const { STATES, MODES, createBalancerController, validateConfig } = require('../src/controller')
+const { STATES, MODES, CONTROLLER_VERSION, createBalancerController, validateConfig } = require('../src/controller')
 
 let clock = 1000000
 
@@ -66,9 +66,9 @@ assert.equal(validateConfig({ solarDetectionSamples: 3.5 }).valid, false)
 
 const normal = createBalancerController({ now: () => clock })
 normal.handle({ type: 'telemetry', telemetry: telemetry(), timestamp: clock })
-normal.handle({ type: 'set_enabled', value: true, timestamp: clock })
 assert.equal(normal.getState().state, STATES.BALANCING)
 assert.equal(normal.getState().selectedAddress, 2)
+assert.equal(normal.getState().automaticBalancingEnabled, true)
 assert.equal(command(normal.handle({ type: 'tick', timestamp: clock })).mode, MODES.TEST)
 
 // NORMAL follows the read-only limits configured in the Cerbo Charge Control UI.
@@ -82,7 +82,6 @@ uiLimits.handle({ type: 'telemetry', telemetry: telemetry([battery(2, { spread: 
     currentLimitEnabled: true
   }
 }), timestamp: clock })
-uiLimits.handle({ type: 'set_enabled', value: true, timestamp: clock })
 const uiNormalCommand = command(uiLimits.handle({ type: 'tick', timestamp: clock }))
 assert.equal(uiNormalCommand.requestedVoltage, 54.8)
 assert.equal(uiNormalCommand.requestedCurrent, 42)
@@ -91,19 +90,16 @@ assert.equal(uiNormalCommand.requestedCurrent, 42)
 const sourceAuthority = createBalancerController({ now: () => clock })
 const wideCells = battery(2, { spread: 0.020, effectiveCells: [{ voltage: 2.5 }, ...Array.from({ length: 15 }, () => ({ voltage: 4.0 }))] })
 sourceAuthority.handle({ type: 'telemetry', telemetry: telemetry([wideCells]), timestamp: clock })
-sourceAuthority.handle({ type: 'set_enabled', value: true, timestamp: clock })
 assert.equal(sourceAuthority.getState().state, STATES.NORMAL)
 
 // Exactly 30 mV is not eligible; strictly greater is eligible.
 const exactThreshold = createBalancerController({ now: () => clock })
 exactThreshold.handle({ type: 'telemetry', telemetry: telemetry([battery(2, { spread: 0.030 })]), timestamp: clock })
-exactThreshold.handle({ type: 'set_enabled', value: true, timestamp: clock })
 assert.equal(exactThreshold.getState().state, STATES.NORMAL)
 
 // Selection remains locked even when another battery later has the larger spread.
 const lock = createBalancerController({ now: () => clock })
 lock.handle({ type: 'telemetry', telemetry: telemetry([battery(2), battery(3, { spread: 0.080 })]), timestamp: clock })
-lock.handle({ type: 'set_enabled', value: true, timestamp: clock })
 assert.equal(lock.getState().selectedAddress, 2)
 sample(lock, [battery(2, { spread: 0.010 }), battery(3, { spread: 0.090 })])
 assert.equal(lock.getState().selectedAddress, 2)
@@ -119,7 +115,6 @@ assert.equal(lock.getState().lastStopReason, 'BALANCE_DISCHARGE_COMPLETE')
 // A selected battery MOSFET interruption reselects the next battery without inhibiting charge.
 const reselect = createBalancerController({ now: () => clock })
 reselect.handle({ type: 'telemetry', telemetry: telemetry([battery(2), battery(3)]), timestamp: clock })
-reselect.handle({ type: 'set_enabled', value: true, timestamp: clock })
 const off = battery(2, { status44: { status1: { active: [] }, status2: { chargeMosfet: false }, status3: { effectiveDischarging: false } } })
 const reselectActions = sample(reselect, [off, battery(3)])
 assert.equal(reselect.getState().selectedAddress, 3)
@@ -128,7 +123,6 @@ assert.equal(command(reselectActions).chargeEnabled, true)
 // All expected integer SOC values must equal 100 before completion latches.
 const full = createBalancerController({ now: () => clock })
 full.handle({ type: 'telemetry', telemetry: telemetry([battery(2), battery(3)]), timestamp: clock })
-full.handle({ type: 'set_enabled', value: true, timestamp: clock })
 sample(full, [battery(2, { soc: 100 }), battery(3, { soc: 99 })])
 assert.equal(full.getState().state, STATES.BALANCING)
 sample(full, [battery(2, { soc: 100 }), battery(3, { soc: 100 })])
@@ -141,7 +135,6 @@ assert.equal(full.getState().completionLatched, false)
 
 // Safety fallback is charge-capable and uses 55 V / 10 A.
 const safety = createBalancerController({ now: () => clock })
-safety.handle({ type: 'set_enabled', value: true, timestamp: clock })
 const safetyCommand = command(safety.handle({ type: 'tick', timestamp: clock }))
 assert.equal(safety.getState().state, STATES.SAFETY_STOP)
 assert.equal(safetyCommand.requestedVoltage, 55)
@@ -152,7 +145,6 @@ assert.equal(safetyCommand.chargeEnabled, true)
 const solar = createBalancerController({ now: () => clock })
 solar.handle({ type: 'telemetry', telemetry: telemetry([battery(2, { current: 1 }), battery(3, { current: 9 })]), timestamp: clock })
 solar.handle({ type: 'configure', config: { ...solar.getConfig(), currentIncreaseRatePerMin: 600 }, timestamp: clock })
-solar.handle({ type: 'set_enabled', value: true, timestamp: clock })
 for (let index = 0; index < 3; index++) sample(solar, [battery(2, { current: 1 }), battery(3, { current: 9 })])
 assert.ok(solar.getState().aggregateCurrentCommand > 4)
 sample(solar, [battery(2, { current: 2 }), battery(3, { current: solar.getState().aggregateCurrentCommand })])
@@ -169,7 +161,6 @@ assert.equal(solar.getState().solarLimited, false)
 // A BMS cap must freeze PI without being classified as a solar limitation.
 const limited = createBalancerController({ now: () => clock })
 limited.handle({ type: 'telemetry', telemetry: telemetry([battery(2, { current: 1 })], { ccl: 1, effectiveControl: { effectiveChargeCurrent: 1, thermalFactor: 1 } }), timestamp: clock })
-limited.handle({ type: 'set_enabled', value: true, timestamp: clock })
 for (let index = 0; index < 5; index++) sample(limited, [battery(2, { current: 1 })], { ccl: 1, effectiveControl: { effectiveChargeCurrent: 1, thermalFactor: 1 } })
 assert.equal(limited.getState().solarLimited, false)
 
@@ -179,3 +170,44 @@ canSelected.handle({ type: 'telemetry', telemetry: telemetry([battery()], { acti
 canSelected.handle({ type: 'set_output_ready', value: true, timestamp: clock })
 canSelected.handle({ type: 'set_mode', value: MODES.ACTIVE, timestamp: clock })
 assert.equal(canSelected.getStatus().mode, MODES.TEST)
+
+// Automatic balancing is ON for a fresh or reset controller and OFF persists.
+const automatic = createBalancerController({ now: () => clock })
+assert.equal(automatic.getState().automaticBalancingEnabled, true)
+automatic.handle({ type: 'telemetry', telemetry: telemetry(), timestamp: clock })
+assert.equal(automatic.getState().state, STATES.BALANCING)
+const automaticOff = automatic.handle({ type: 'set_automatic_balancing', value: false, timestamp: clock })
+assert.equal(automatic.getState().state, STATES.NORMAL)
+assert.equal(automatic.getState().selectedAddress, null)
+assert.equal(automatic.getState().automaticBalancingEnabled, false)
+assert.equal(command(automaticOff).reason, 'AUTOMATIC_BALANCING_OFF')
+assert.equal(command(automaticOff).requestedVoltage, 55.0)
+assert.equal(command(automaticOff).requestedCurrent, 100.0)
+sample(automatic, [battery(2, { spread: 0.090 })])
+assert.equal(automatic.getState().state, STATES.NORMAL)
+assert.equal(automatic.getState().selectedAddress, null)
+
+const restoredOff = createBalancerController({ now: () => clock })
+restoredOff.handle({
+  type: 'load',
+  state: { version: CONTROLLER_VERSION, state: STATES.NORMAL, mode: MODES.TEST, automaticBalancingEnabled: false },
+  config: {},
+  timestamp: clock
+})
+restoredOff.handle({ type: 'telemetry', telemetry: telemetry(), timestamp: clock })
+assert.equal(restoredOff.getState().automaticBalancingEnabled, false)
+assert.equal(restoredOff.getState().state, STATES.NORMAL)
+
+// Version 3 enabled state migrates; missing enable state defaults ON.
+const migratedOff = createBalancerController({ now: () => clock })
+migratedOff.handle({ type: 'load', state: { version: 3, state: STATES.NORMAL, mode: MODES.TEST, enabled: false }, config: {}, timestamp: clock })
+assert.equal(migratedOff.getState().automaticBalancingEnabled, false)
+const migratedDefault = createBalancerController({ now: () => clock })
+migratedDefault.handle({ type: 'load', state: { version: 3, state: STATES.NORMAL, mode: MODES.TEST }, config: {}, timestamp: clock })
+assert.equal(migratedDefault.getState().automaticBalancingEnabled, true)
+
+// Reset control preserves the switch; restore defaults turns it ON.
+restoredOff.handle({ type: 'reset_integrator', timestamp: clock })
+assert.equal(restoredOff.getState().automaticBalancingEnabled, false)
+restoredOff.handle({ type: 'restore_defaults', timestamp: clock })
+assert.equal(restoredOff.getState().automaticBalancingEnabled, true)

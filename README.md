@@ -26,6 +26,15 @@ charge path/protection excludes it. Cloud-limited charging freezes control
 without changing state. There are no forced discharge cycles or software cell
 voltage stops. Master CID2 `0x63` permission and limits remain authoritative.
 
+Automatic balancing defaults to **ON** after a fresh state, state reset, or
+Restore Defaults. It automatically selects the first eligible battery; there
+is no manual Start/Stop operation. Turning it OFF immediately releases the
+selection, resets feed-forward and PI, and keeps the controller in `NORMAL`
+using the Cerbo Charge Control voltage/current request. The virtual BMS still
+enforces Dyness, thermal, permission, and telemetry safety constraints. Select
+the normal Dyness CAN BMS manually in Cerbo when RS485 virtual-BMS authority is
+not wanted. Ordinary restarts preserve the selected automatic-balancing state.
+
 In `NORMAL`, requested charge voltage and current come from the Cerbo's
 read-only **Settings → System Setup → Charge Control** values. The virtual BMS
 also treats enabled UI limits as ceilings during balancing, in addition to the

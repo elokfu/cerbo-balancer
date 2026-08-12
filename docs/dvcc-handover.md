@@ -33,6 +33,11 @@ monitor**. Selecting the virtual source makes its standard effective CVL,
 CCL, DCL, and permission paths the DVCC input. Selecting CAN restores the
 normal BMS. The balancer service never writes this setting.
 
+The Automatic balancing switch does not select a BMS. OFF keeps the controller
+in NORMAL and requests the Cerbo Charge Control limits through whichever BMS
+the operator selected. Selecting the normal CAN BMS is the explicit way to
+bypass RS485 virtual-BMS authority.
+
 The virtual service publishes both layers: standard paths show final effective
 values, while `/Control/*`, the balancer page, CSV output, and parsed snapshots
 show controller-requested values, freshness, thermal derating, active source,
