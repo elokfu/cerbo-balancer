@@ -40,7 +40,8 @@ invented alarms or protection states. The raw byte remains in `statusRaw`.
 The virtual BMS uses the permission bits for `/Bms/AllowToCharge` and
 `/Bms/AllowToDischarge`, together with the advertised current limits. A zero
 CCL is valid and means charging is not permitted; it is not treated as a
-disconnect. In a fresh ACTIVE controller command, `chargeEnabled=false`
+disconnect. When virtual-BMS authority is applied, a fresh controller command
+with `chargeEnabled=false`
 additionally clamps charge current to zero and `/Bms/AllowToCharge` false,
 without changing Dyness discharge permission or DCL. The management page
 displays all four permission/state bits and the reserved low bits.
@@ -56,7 +57,7 @@ owns `ttyUSB0`, invokes Venus' official `stop-tty.sh ttyUSB0` handoff, and
 starts the Python poller as `nodered`. Node-RED only reads the latest telemetry
 JSONL line; it does not launch another serial client. If the adapter is
 disconnected, the service emits a timestamped invalid snapshot, keeps CCL/DCL
-at zero, and does not allow ACTIVE controller operation.
+at zero, and does not allow controller requests to be applied.
 
 The Python poller keeps one serial session open, requests exclusive access when
 supported, and reconnects with a two-second backoff after USB or serial errors.
@@ -104,8 +105,8 @@ The active source is selected manually in Cerbo at **Settings → System Setup
 (`com.victronenergy.battery/512`) to use the normal CAN BMS, or `Dyness RS485
 virtual BMS` (`com.victronenergy.battery/100`) to let DVCC use the virtual
 BMS limits. The service never changes this setting and continues publishing
-diagnostics for both choices. The controller remains in TEST until its
-separate activation gate is explicitly passed.
+diagnostics for both choices. Virtual selection applies fresh requests; CAN
+selection keeps them in shadow; unavailable selection is non-authoritative.
 
 No partial current sum is published as authoritative. D-Bus publishing does
 not modify DVCC, charger settings, or battery configuration.
@@ -143,8 +144,13 @@ discovered later are ignored and do not add columns. If any battery in the
 initial inventory is absent from a later sample, the service stops that
 recording session rather than writing partial rows.
 
+If a deployment adds diagnostic columns while a recording is active, service
+restart continues the existing file with its original ordered header. The new
+columns are used only when a new recording file is started, so one CSV never
+contains mixed row schemas.
+
 The CSV header contains the constant serial metadata, virtual-BMS identity,
-shadow-mode marker, initial battery addresses, and bit explanations for the
+Cerbo-selection authority marker, initial battery addresses, and bit explanations for the
 CID2 `0x44` Status1–Status5 registers. Those five status columns are written as
 fixed two-digit hexadecimal bytes (`0x00` through `0xFF`), so the raw register
 value is immediately comparable with the bit legend in the header. Each battery
@@ -156,7 +162,10 @@ Per-battery
 columns precede the raw BMS and controller-arbitration columns. The trailing
 control columns record the controller-requested CVL/CCL/charge state and the
 final virtual-BMS effective CVL/CCL/DCL, permissions, thermal factor, command
-freshness, and arbitration reason. Each data row uses local Cerbo time as
+freshness, and arbitration reason. They also record `authorityState`, whether
+the controller request was applied, feed-forward gain, unscaled/effective
+feed-forward, P/I terms, output saturation, and upward-slew limiting. Each data
+row uses local Cerbo time as
 `HH:MM:SS` in the configured `CERBO_BALANCER_TIMEZONE` (default
 `Europe/Berlin`) and includes a monotonic `sample_number`, so recordings longer than
 24 hours remain unambiguous without storing a calendar date.

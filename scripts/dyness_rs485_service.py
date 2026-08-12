@@ -444,6 +444,11 @@ class CsvLogger:
         "virtual_bms_discharge_blocked_by_status",
         "virtual_bms_charge_blocked_by_controller",
         "virtual_bms_output_valid", "virtual_bms_arbitration_reason",
+        "virtual_bms_authority_state", "virtual_bms_controller_request_applied",
+        "controller_feed_forward_gain", "controller_feed_forward_unscaled_a",
+        "controller_feed_forward_effective_a", "controller_p_term_a",
+        "controller_i_term_a", "controller_output_saturated",
+        "controller_output_slew_limited",
     ]
     battery_fields = [
         "present", "valid", "voltage_v", "current_a", "soc_percent",
@@ -594,7 +599,13 @@ class CsvLogger:
         if exists:
             with target.open("r", encoding="utf-8") as stream:
                 header = next((line.rstrip("\n") for line in stream if not line.startswith("#")), "")
-            if header != ",".join(columns):
+            existing_columns = next(csv.reader([header]), []) if header else []
+            # A deployment may add diagnostic columns while a fixed-inventory
+            # recording is active. Continue that file using its original
+            # ordered subset; newly started files receive the current schema.
+            if existing_columns and all(column in columns for column in existing_columns):
+                columns = existing_columns
+            elif header != ",".join(columns):
                 return {"written": False}
         system = snapshot.get("system") or {}
         limits = snapshot.get("limits") or {}
@@ -640,6 +651,15 @@ class CsvLogger:
             "virtual_bms_charge_blocked_by_controller": control_output.get("chargeBlockedByController"),
             "virtual_bms_output_valid": control_output.get("outputValid"),
             "virtual_bms_arbitration_reason": control_output.get("reason"),
+            "virtual_bms_authority_state": control_output.get("authorityState"),
+            "virtual_bms_controller_request_applied": control_output.get("controllerRequestApplied"),
+            "controller_feed_forward_gain": self._format_number(control_output.get("feedForwardGain"), 3),
+            "controller_feed_forward_unscaled_a": self._format_number(control_output.get("feedForwardCurrent")),
+            "controller_feed_forward_effective_a": self._format_number(control_output.get("effectiveFeedForwardCurrent")),
+            "controller_p_term_a": self._format_number(control_output.get("pTerm"), 3),
+            "controller_i_term_a": self._format_number(control_output.get("iTerm"), 3),
+            "controller_output_saturated": control_output.get("outputSaturated"),
+            "controller_output_slew_limited": control_output.get("outputSlewLimited"),
         })
         for battery in snapshot.get("batteries") or []:
             address = int(battery.get("address"))
@@ -659,9 +679,10 @@ class CsvLogger:
                 )
             for cell in battery.get("effectiveCells") or []: row[prefix + f"cell_{int(cell.get('index')):02d}_v"] = self._format_cell_voltage(cell.get("voltage"))
             for index, value in enumerate(battery.get("temperatures") or [], 1): row[prefix + f"temp_{index:02d}_c"] = value
+        row = {column: row.get(column, "") for column in columns}
         with target.open("a", newline="", encoding="utf-8") as stream:
             if not exists:
-                stream.write(f"# schema_version=11\n# serial_port={snapshot.get('serialPort')}\n# baud={snapshot.get('baud')}\n# poll_interval_seconds=8\n# timestamp_format=HH:MM:SS {self.timezone_name}\n# virtual_bms_service=com.victronenergy.battery.rs485_dyness\n# virtual_bms_device_instance=100\n# dvcc_output_mode=TEST/shadow\n# status1_bits=bit7 pack under-voltage protection; bit6 charge temperature protection; bit5 discharge temperature protection; bit4 discharge over-current protection; bit3 reserved; bit2 charge over-current protection; bit1 cell under-voltage protection; bit0 over-voltage protection\n# status2_bits=bit7-bit4 reserved; bit3 module power active; bit2 discharge MOSFET on; bit1 charge MOSFET on; bit0 precharge MOSFET on\n# status3_bits=bit7 effective charging; bit6 effective discharging; bit5 heater active; bit4-bit2 reserved; bit3 fully charged; bit2-bit1 reserved; bit0 buzzer active\n# status4_bits=bit7-bit0 cell voltage-check faults for cells 8-1 respectively\n# status5_bits=bit7-bit0 cell voltage-check faults for cells 16-9 respectively\n# initial_addresses={','.join(str(address) for address in self.initial_addresses)}\n")
+                stream.write(f"# schema_version=12\n# serial_port={snapshot.get('serialPort')}\n# baud={snapshot.get('baud')}\n# poll_interval_seconds=8\n# timestamp_format=HH:MM:SS {self.timezone_name}\n# virtual_bms_service=com.victronenergy.battery.rs485_dyness\n# virtual_bms_device_instance=100\n# dvcc_authority=cerbo_battery_monitor_selection\n# status1_bits=bit7 pack under-voltage protection; bit6 charge temperature protection; bit5 discharge temperature protection; bit4 discharge over-current protection; bit3 reserved; bit2 charge over-current protection; bit1 cell under-voltage protection; bit0 over-voltage protection\n# status2_bits=bit7-bit4 reserved; bit3 module power active; bit2 discharge MOSFET on; bit1 charge MOSFET on; bit0 precharge MOSFET on\n# status3_bits=bit7 effective charging; bit6 effective discharging; bit5 heater active; bit4-bit2 reserved; bit3 fully charged; bit2-bit1 reserved; bit0 buzzer active\n# status4_bits=bit7-bit0 cell voltage-check faults for cells 8-1 respectively\n# status5_bits=bit7-bit0 cell voltage-check faults for cells 16-9 respectively\n# initial_addresses={','.join(str(address) for address in self.initial_addresses)}\n")
                 csv.DictWriter(stream, fieldnames=columns).writeheader()
             csv.DictWriter(stream, fieldnames=columns).writerow(row)
         self.next_sample_number += 1
@@ -713,16 +734,19 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
     requested_current = float(command.get("requestedCurrent", 100.0)) if fresh_command else 100.0
     controller_charge_enabled = bool(command.get("chargeEnabled", True)) if fresh_command else True
     charge_request_current = requested_current if controller_charge_enabled else 0.0
-    active_command = command if command and command.get("mode") == "ACTIVE" else None
-    active_command_fresh = bool(active_command and fresh_command)
+    selection = snapshot.get("activeBms") or {}
+    selection_valid = selection.get("readbackValid") is True
+    virtual_selected = selection.get("virtualSelected") is True
+    authority_state = "APPLIED" if selection_valid and virtual_selected else "SHADOW" if selection_valid else "UNKNOWN"
+    controller_request_applied = bool(authority_state == "APPLIED" and fresh_command and valid)
     # Invalid pack telemetry must remain charge-capable at the explicitly
     # requested conservative fallback. Valid master limits and permission are
     # still authoritative whenever they are available.
     normal_voltage = ui_voltage_cap if ui_voltage_cap is not None else 55.2
     normal_current = ui_current_cap if ui_current_cap is not None else 100.0
-    applied_voltage = requested_voltage if active_command_fresh else normal_voltage
-    applied_current = charge_request_current if active_command_fresh else normal_current
-    applied_charge_enabled = controller_charge_enabled if active_command_fresh else True
+    applied_voltage = requested_voltage if controller_request_applied else normal_voltage
+    applied_current = charge_request_current if controller_request_applied else normal_current
+    applied_charge_enabled = controller_charge_enabled if controller_request_applied else True
     voltage_ceilings = [applied_voltage, bms_cvl, 56.5]
     current_ceilings = [applied_current, bms_ccl]
     if ui_voltage_cap is not None:
@@ -745,8 +769,10 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
         reason = "RS485_TELEMETRY_INVALID"
     elif not fresh_command:
         reason = "COMMAND_STALE_OR_UNAVAILABLE"
-    elif not active_command_fresh:
-        reason = "TEST_MODE_SHADOW_OUTPUT"
+    elif authority_state == "UNKNOWN":
+        reason = "BMS_SELECTION_UNKNOWN_SHADOW"
+    elif authority_state == "SHADOW":
+        reason = "CAN_BMS_SELECTED_SHADOW"
     elif charge_blocked:
         reason = "BMS_CHARGE_PERMISSION_DISABLED"
     elif not controller_charge_enabled:
@@ -760,11 +786,18 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
     else:
         reason = "BMS_LIMITS_ACCEPTED"
     return {
-        "mode": "ACTIVE" if active_command_fresh and valid else "TEST",
+        "authorityState": authority_state,
+        "controllerRequestApplied": controller_request_applied,
         "commandFresh": fresh_command,
         "commandAgeMs": command_age,
-        "commandMode": command.get("mode") if isinstance(command, dict) else None,
         "commandReason": command.get("reason") if isinstance(command, dict) else None,
+        "feedForwardGain": command.get("feedForwardGain") if isinstance(command, dict) else None,
+        "feedForwardCurrent": command.get("feedForwardCurrent") if isinstance(command, dict) else None,
+        "effectiveFeedForwardCurrent": command.get("effectiveFeedForwardCurrent") if isinstance(command, dict) else None,
+        "pTerm": command.get("pTerm") if isinstance(command, dict) else None,
+        "iTerm": command.get("iTerm") if isinstance(command, dict) else None,
+        "outputSaturated": command.get("outputSaturated") if isinstance(command, dict) else None,
+        "outputSlewLimited": command.get("outputSlewLimited") if isinstance(command, dict) else None,
         "requestedVoltage": requested_voltage if fresh_command else None,
         "requestedCurrent": requested_current if fresh_command else None,
         "controllerChargeEnabled": controller_charge_enabled if fresh_command else None,
@@ -785,7 +818,7 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
         "thermalFactor": factor,
         "statusFlags": status_flags,
         "chargeBlockedByStatus": charge_blocked,
-        "chargeBlockedByController": bool(active_command_fresh and not controller_charge_enabled),
+        "chargeBlockedByController": bool(controller_request_applied and not controller_charge_enabled),
         "dischargeBlockedByStatus": discharge_blocked,
         "outputValid": valid,
         "reason": reason,
@@ -1392,7 +1425,8 @@ class DbusPublisher:
                 "/Control/ActiveBmsService": dbus.String(""),
                 "/Control/ActiveBmsInstance": dbus.Int32(-1),
                 "/Control/ActiveBmsLabel": dbus.String("BMS selection unknown"),
-                "/Control/OutputMode": dbus.String("TEST/shadow"),
+                "/Control/AuthorityState": dbus.String("UNKNOWN"),
+                "/Control/ControllerRequestApplied": dbus.Boolean(False),
             }
             for path, value in defaults.items():
                 self.objects[path] = Item(self.bus, path, value)
@@ -1495,7 +1529,8 @@ class DbusPublisher:
             "/Control/ActiveBmsService": dbus.String(str(selection.get("activeBmsService") or "")),
             "/Control/ActiveBmsInstance": dbus.Int32(active_instance),
             "/Control/ActiveBmsLabel": dbus.String(str(selection.get("label") or "BMS selection unknown")),
-            "/Control/OutputMode": dbus.String("ACTIVE" if control.get("mode") == "ACTIVE" else "TEST/shadow"),
+            "/Control/AuthorityState": dbus.String(str(control.get("authorityState") or "UNKNOWN")),
+            "/Control/ControllerRequestApplied": dbus.Boolean(bool(control.get("controllerRequestApplied"))),
         }
         for path, value in values.items():
             if path in self.objects:
@@ -1512,14 +1547,13 @@ def main() -> int:
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
     store = JsonlStore(args.state_dir)
-    store.ensure_json("cerbo-balancer-config.json", {"mode": "TEST", "automaticBalancingEnabled": True})
+    store.ensure_json("cerbo-balancer-config.json", {"automaticBalancingEnabled": True})
     store.ensure_json("cerbo-balancer-state.json", {
-        "version": 4,
+        "version": 5,
         "state": "NORMAL",
-        "mode": "TEST",
         "automaticBalancingEnabled": True,
     })
-    store.ensure_json("cerbo-balancer-command.json", {"version": 0, "mode": "TEST"})
+    store.ensure_json("cerbo-balancer-command.json", {"version": 0})
     store.ensure_json("cerbo-balancer-csv-logging.json", {"enabled": False, "filename": None})
     store.ensure_json("cerbo-balancer-rs485-inventory.json", {"version": 1, "activeAddresses": [], "pendingRemoval": [], "lastSeenAt": {}})
     store.ensure_json("cerbo-balancer-sessions.jsonl", {})

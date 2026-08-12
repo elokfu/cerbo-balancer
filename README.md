@@ -1,6 +1,6 @@
 # Cerbo Dyness Balancer
 
-Dyness/Pylon-compatible RS485 telemetry and a TEST-mode active-balancing
+Dyness/Pylon-compatible RS485 telemetry and an active-balancing
 controller for Cerbo GX. The RS485 adapter is polled at 115200 8N1 using only
 CID2 `0x42`, `0x44`, `0x61`, and `0x63` read requests.
 
@@ -13,12 +13,11 @@ diagnostic-only for those decisions.
 
 ## Current commissioning boundary
 
-The flow starts in `TEST` mode. It calculates a feed-forward plus slow-PI
-aggregate-current request that targets 2 A in the first battery whose addressed
-CID2 `0x61` spread is strictly above 30 mV. ACTIVE
-is still a commissioning gate: it requires fresh complete telemetry, a valid
-configuration, output readback, virtual-BMS selection, verified propagation to
-the MPPTs and MultiPlus, and separate explicit activation approval.
+The flow calculates a feed-forward plus slow-PI aggregate-current request that
+targets 2 A in the first battery whose addressed CID2 `0x61` spread is strictly
+above 30 mV. Cerbo's manually selected battery monitor is the authority gate:
+instance `100` applies fresh controller requests, while the CAN BMS keeps them
+as shadow diagnostics. Unknown selection also remains non-authoritative.
 
 The selected battery remains locked until all expected batteries report integer
 SOC 100, a qualifying effective-discharge completion occurs, or its local
@@ -34,6 +33,11 @@ using the Cerbo Charge Control voltage/current request. The virtual BMS still
 enforces Dyness, thermal, permission, and telemetry safety constraints. Select
 the normal Dyness CAN BMS manually in Cerbo when RS485 virtual-BMS authority is
 not wanted. Ordinary restarts preserve the selected automatic-balancing state.
+
+Production PI defaults are feed-forward gain `1.0`, Kp `0.20`, Ki `0.02`, and
+a 10 A/min maximum upward request slew. The dashboard protects unsaved
+configuration edits from telemetry refresh and confirms Apply requests before
+replacing the editor values.
 
 In `NORMAL`, requested charge voltage and current come from the Cerbo's
 read-only **Settings → System Setup → Charge Control** values. The virtual BMS

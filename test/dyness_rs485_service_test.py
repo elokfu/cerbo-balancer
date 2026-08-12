@@ -144,6 +144,7 @@ class DynessServiceTests(unittest.TestCase):
     def test_effective_control_exposes_requested_and_arbitrated_values(self):
         snapshot = {
             "valid": True,
+            "activeBms": {"readbackValid": True, "virtualSelected": True},
             "limits": {
                 "chargeVoltage": 56.5,
                 "chargeCurrent": 56.0,
@@ -158,12 +159,18 @@ class DynessServiceTests(unittest.TestCase):
             ],
         }
         command = {
-            "mode": "ACTIVE",
             "timestamp": 999000,
             "requestedVoltage": 57.0,
             "requestedCurrent": 80.0,
             "chargeEnabled": True,
             "reason": "BALANCE_CURRENT_CONTROL",
+            "feedForwardGain": 0.0,
+            "feedForwardCurrent": 8.0,
+            "effectiveFeedForwardCurrent": 0.0,
+            "pTerm": 0.3,
+            "iTerm": 1.2,
+            "outputSaturated": False,
+            "outputSlewLimited": True,
         }
         with patch.object(service, "now_ms", return_value=1000000):
             control = effective_control(snapshot, command)
@@ -181,6 +188,7 @@ class DynessServiceTests(unittest.TestCase):
     def test_cerbo_ui_limits_normal_and_active_arbitration(self):
         snapshot = {
             "valid": True,
+            "activeBms": {"readbackValid": True, "virtualSelected": False},
             "chargeControlSettings": {
                 "readbackValid": True,
                 "maxChargeVoltage": 55.0,
@@ -197,7 +205,7 @@ class DynessServiceTests(unittest.TestCase):
             "batteries": [{"temperatures": [25.0]}],
         }
         test_command = {
-            "mode": "TEST", "timestamp": 999000,
+            "timestamp": 999000,
             "requestedVoltage": 56.5, "requestedCurrent": 80.0,
             "chargeEnabled": True,
         }
@@ -208,7 +216,8 @@ class DynessServiceTests(unittest.TestCase):
         self.assertEqual(normal["cerboMaxChargeVoltage"], 55.0)
         self.assertEqual(normal["cerboMaxChargeCurrent"], 40.0)
 
-        active_command = {**test_command, "mode": "ACTIVE"}
+        snapshot["activeBms"] = {"readbackValid": True, "virtualSelected": True}
+        active_command = dict(test_command)
         with patch.object(service, "now_ms", return_value=1000000):
             active = effective_control(snapshot, active_command)
         self.assertEqual(active["effectiveChargeVoltage"], 55.0)
@@ -230,6 +239,7 @@ class DynessServiceTests(unittest.TestCase):
     def test_effective_control_marks_zero_ccl_and_controller_inhibit(self):
         base = {
             "valid": True,
+            "activeBms": {"readbackValid": True, "virtualSelected": True},
             "limits": {
                 "chargeVoltage": 56.5,
                 "chargeCurrent": 0.0,
@@ -242,7 +252,6 @@ class DynessServiceTests(unittest.TestCase):
             "batteries": [{"temperatures": [25.0]}],
         }
         command = {
-            "mode": "ACTIVE",
             "timestamp": 999000,
             "requestedVoltage": 55.2,
             "requestedCurrent": 20.0,
@@ -262,9 +271,10 @@ class DynessServiceTests(unittest.TestCase):
         self.assertFalse(inhibited["effectiveChargeEnabled"])
         self.assertEqual(inhibited["reason"], "CONTROLLER_CHARGE_INHIBIT")
 
-    def test_test_mode_keeps_requested_values_shadow_only(self):
+    def test_can_selection_keeps_requested_values_shadow_only(self):
         snapshot = {
             "valid": True,
+            "activeBms": {"readbackValid": True, "virtualSelected": False},
             "limits": {
                 "chargeVoltage": 56.5,
                 "chargeCurrent": 56.0,
@@ -274,7 +284,7 @@ class DynessServiceTests(unittest.TestCase):
             "batteries": [{"temperatures": [25.0]}],
         }
         command = {
-            "mode": "TEST", "timestamp": 999000,
+            "timestamp": 999000,
             "requestedVoltage": 56.5, "requestedCurrent": 2.0,
             "chargeEnabled": True,
         }
@@ -283,13 +293,16 @@ class DynessServiceTests(unittest.TestCase):
         self.assertEqual(result["requestedCurrent"], 2.0)
         self.assertEqual(result["effectiveChargeVoltage"], 55.2)
         self.assertEqual(result["effectiveChargeCurrent"], 56.0)
-        self.assertEqual(result["reason"], "TEST_MODE_SHADOW_OUTPUT")
+        self.assertEqual(result["authorityState"], "SHADOW")
+        self.assertFalse(result["controllerRequestApplied"])
+        self.assertEqual(result["reason"], "CAN_BMS_SELECTED_SHADOW")
     def test_csv_logs_requested_and_effective_virtual_bms_output(self):
         snapshot = {
             "timestamp": 1000000,
             "valid": True,
             "serialPort": "/dev/ttyUSB0",
             "baud": 115200,
+            "activeBms": {"readbackValid": True, "virtualSelected": True},
             "system": {"voltage61": 53.25, "soc61": 98, "maximumBmsTemperature61": 31.5},
             "limits": {
                 "chargeVoltage": 56.5,
@@ -309,12 +322,18 @@ class DynessServiceTests(unittest.TestCase):
             }],
         }
         command = {
-            "mode": "ACTIVE",
             "timestamp": 999000,
             "requestedVoltage": 57.0,
             "requestedCurrent": 80.0,
             "chargeEnabled": True,
             "reason": "BALANCE_CURRENT_CONTROL",
+            "feedForwardGain": 0.0,
+            "feedForwardCurrent": 8.0,
+            "effectiveFeedForwardCurrent": 0.0,
+            "pTerm": 0.3,
+            "iTerm": 1.2,
+            "outputSaturated": False,
+            "outputSlewLimited": True,
         }
         with patch.object(service, "now_ms", return_value=1000000):
             snapshot["effectiveControl"] = effective_control(snapshot, command)
@@ -324,6 +343,8 @@ class DynessServiceTests(unittest.TestCase):
             self.assertTrue(result["written"])
             contents = (Path(root) / service.CSV_LOG_DIRECTORY / "arbitration.csv").read_text(encoding="utf-8")
             self.assertIn("# virtual_bms_service=com.victronenergy.battery.rs485_dyness", contents)
+            self.assertIn("# schema_version=12", contents)
+            self.assertIn("# dvcc_authority=cerbo_battery_monitor_selection", contents)
             self.assertIn("controller_requested_voltage_v", contents)
             self.assertIn("virtual_bms_effective_ccl_a", contents)
             rows = list(csv.DictReader(line for line in contents.splitlines() if not line.startswith("#")))
@@ -331,6 +352,11 @@ class DynessServiceTests(unittest.TestCase):
             self.assertEqual(rows[0]["virtual_bms_effective_cvl_v"], "56.50")
             self.assertEqual(rows[0]["virtual_bms_effective_ccl_a"], "56.00")
             self.assertEqual(rows[0]["virtual_bms_arbitration_reason"], "BMS_OR_SAFETY_LIMIT")
+            self.assertEqual(rows[0]["virtual_bms_authority_state"], "APPLIED")
+            self.assertEqual(rows[0]["virtual_bms_controller_request_applied"], "True")
+            self.assertEqual(rows[0]["controller_feed_forward_gain"], "0.000")
+            self.assertEqual(rows[0]["controller_feed_forward_effective_a"], "0.00")
+            self.assertEqual(rows[0]["controller_output_slew_limited"], "True")
 
     def test_status44_is_polled_every_five_seconds_without_affecting_validity(self):
         poller = ReadOnlyPoller("C:\\fake-dyness-rs485", 115200, 0.01)
@@ -498,19 +524,22 @@ class DynessServiceTests(unittest.TestCase):
             "limits": {"chargeVoltage": 56.4, "chargeCurrent": 56.0,
                        "dischargeCurrentSigned": -198.8},
         }
-        command = {"mode": "ACTIVE", "timestamp": 0,
+        snapshot["activeBms"] = {"readbackValid": True, "virtualSelected": True}
+        command = {"timestamp": 0,
                    "requestedVoltage": 56.8, "requestedCurrent": 100.0}
         result = effective_control(snapshot, command)
-        self.assertEqual(result["mode"], "TEST")  # deliberately stale command
+        self.assertEqual(result["authorityState"], "APPLIED")
+        self.assertFalse(result["controllerRequestApplied"])  # deliberately stale command
         command["timestamp"] = __import__("time").time_ns() // 1_000_000
         result = effective_control(snapshot, command)
-        self.assertEqual(result["mode"], "ACTIVE")
+        self.assertTrue(result["controllerRequestApplied"])
         self.assertEqual(result["effectiveChargeVoltage"], 56.4)
         self.assertEqual(result["effectiveChargeCurrent"], 28.0)
 
     def test_eight_second_previous_cycle_command_remains_fresh(self):
         snapshot = {
             "valid": True,
+            "activeBms": {"readbackValid": True, "virtualSelected": True},
             "batteries": [{"temperatures": [25.0]}],
             "limits": {
                 "chargeVoltage": 56.5, "chargeCurrent": 56.0,
@@ -519,7 +548,7 @@ class DynessServiceTests(unittest.TestCase):
             },
         }
         command = {
-            "mode": "ACTIVE", "timestamp": 992000,
+            "timestamp": 992000,
             "requestedVoltage": 56.0, "requestedCurrent": 12.0,
             "chargeEnabled": True,
         }
@@ -527,11 +556,12 @@ class DynessServiceTests(unittest.TestCase):
             result = effective_control(snapshot, command)
         self.assertTrue(result["commandFresh"])
         self.assertEqual(result["commandAgeMs"], 8000)
-        self.assertEqual(result["mode"], "ACTIVE")
+        self.assertTrue(result["controllerRequestApplied"])
 
     def test_bms_permissions_block_the_affected_direction(self):
         snapshot = {
             "valid": True,
+            "activeBms": {"readbackValid": True, "virtualSelected": True},
             "batteries": [{"temperatures": [25.0]}],
             "limits": {
                 "chargeVoltage": 56.5,
@@ -552,6 +582,7 @@ class DynessServiceTests(unittest.TestCase):
     def test_protection_status_clamps_voltage_and_permissions(self):
         snapshot = {
             "valid": True,
+            "activeBms": {"readbackValid": True, "virtualSelected": True},
             "batteries": [{"temperatures": [25.0]}],
             "limits": {
                 "chargeVoltage": 56.5,
@@ -583,6 +614,7 @@ class DynessServiceTests(unittest.TestCase):
     def test_active_controller_can_inhibit_charge_without_affecting_discharge(self):
         snapshot = {
             "valid": True,
+            "activeBms": {"readbackValid": True, "virtualSelected": True},
             "batteries": [{"temperatures": [25.0]}],
             "limits": {
                 "chargeVoltage": 56.5,
@@ -592,7 +624,6 @@ class DynessServiceTests(unittest.TestCase):
             },
         }
         command = {
-            "mode": "ACTIVE",
             "timestamp": __import__("time").time_ns() // 1_000_000,
             "requestedVoltage": 56.5,
             "requestedCurrent": 0.0,
@@ -607,8 +638,8 @@ class DynessServiceTests(unittest.TestCase):
     def test_store_creates_runtime_files_without_credentials(self):
         with tempfile.TemporaryDirectory() as directory:
             store = JsonlStore(directory)
-            store.ensure_json("cerbo-balancer-config.json", {"mode": "TEST"})
-            self.assertEqual(store.read_json("cerbo-balancer-config.json")["mode"], "TEST")
+            store.ensure_json("cerbo-balancer-config.json", {"automaticBalancingEnabled": True})
+            self.assertTrue(store.read_json("cerbo-balancer-config.json")["automaticBalancingEnabled"])
 
     def test_active_bms_selection_decodes_cerbo_system_readback(self):
         virtual = service.active_bms_selection({
@@ -820,6 +851,39 @@ class DynessServiceTests(unittest.TestCase):
             self.assertEqual(csv_rows[0]["battery_02_status3"], "0xC9")
             self.assertEqual(csv_rows[0]["battery_02_status4"], "0x00")
             self.assertEqual(csv_rows[0]["battery_02_status5"], "0x80")
+
+    def test_csv_restart_preserves_existing_subset_schema(self):
+        snapshot = {
+            "timestamp": 1_700_000_000_000,
+            "valid": True,
+            "serialPort": "/dev/ttyUSB0",
+            "baud": 115200,
+            "inventory": {"activeAddresses": [2]},
+            "system": {"voltage61": 53.25, "soc61": 98},
+            "limits": {"chargeCurrent": 56.0, "dischargeCurrentSigned": -198.8,
+                       "statusFlags": {"chargeEnabled": True, "dischargeEnabled": True}},
+            "aggregate": {"vmin": 3.317, "vmax": 3.329, "spread": 0.012,
+                          "summedBatteryCurrent": 1.5},
+            "batteries": [{"address": 2, "valid": True, "voltage": 53.25,
+                           "current": 1.5, "effectiveCells": [], "temperatures": []}],
+        }
+        legacy_columns = service.CsvLogger.columns_for((2,))[:-9]
+        with tempfile.TemporaryDirectory() as directory:
+            target_dir = Path(directory) / service.CSV_LOG_DIRECTORY
+            target_dir.mkdir(parents=True)
+            target = target_dir / "active.csv"
+            target.write_text(
+                "# schema_version=11\n# initial_addresses=2\n" +
+                ",".join(legacy_columns) + "\n",
+                encoding="utf-8",
+            )
+            logger = service.CsvLogger(directory)
+            result = logger.write(snapshot, {"enabled": True, "filename": "active.csv"})
+            self.assertTrue(result["written"])
+            data_lines = [line for line in target.read_text(encoding="utf-8").splitlines()
+                          if not line.startswith("#")]
+            self.assertEqual(data_lines[0], ",".join(legacy_columns))
+            self.assertEqual(len(next(csv.reader([data_lines[1]]))), len(legacy_columns))
 
 
 if __name__ == "__main__":

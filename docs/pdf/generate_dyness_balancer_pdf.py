@@ -311,8 +311,8 @@ class UmlDiagram(Flowable):
         elif self.kind == "control":
             self._box(c, 12, 132, 104, 48, "New 8 s telemetry", ("selected current", "positive total current"), PALE_BLUE, BLUE)
             self._box(c, 142, 132, 104, 48, "Share estimate", ("Iselected / Itotal", "EWMA alpha = 0.20"), PALE_BLUE, BLUE)
-            self._box(c, 272, 132, 104, 48, "Feed-forward", ("2 A / filtered share", "2 A fallback"), PALE_GREEN, GREEN)
-            self._box(c, 402, 132, 104, 48, "Slow PI", ("Kp 0.20", "Ki 0.002 A/(A*s)"), PALE_GREEN, GREEN)
+            self._box(c, 272, 132, 104, 48, "Feed-forward", ("gain x 2 A / share", "gain 0 for PI-only"), PALE_GREEN, GREEN)
+            self._box(c, 402, 132, 104, 48, "Slow PI", ("Kp 0.20", "Ki 0.02 A/(A*s)"), PALE_GREEN, GREEN)
             self._box(c, 206, 50, 104, 48, "Aggregate request", ("rise <= 10 A/min", "downward immediate"), PALE_AMBER, AMBER)
             self._box(c, 370, 50, 142, 48, "Final arbitration", ("Cerbo UI, Dyness CVL/CCL", "thermal factor, permissions"), PALE_AMBER, AMBER)
             self._arrow(c, 116, 156, 142, 156)
@@ -327,7 +327,7 @@ class UmlDiagram(Flowable):
             for x, (title, sub) in zip(xs, labels):
                 self._lifeline(c, x, title, sub)
             steps = [
-                (145, 0, 1, "request CVL/CCL + mode"),
+                (145, 0, 1, "request CVL/CCL"),
                 (121, 2, 1, "read MaxChargeVoltage / Current"),
                 (97, 3, 1, "read RS485 limits + permissions"),
                 (73, 1, 4, "publish effective CVL/CCL/DCL"),
@@ -439,7 +439,7 @@ def build() -> Path:
         Spacer(1, 8),
         table([
             [p("Document scope", "cell_bold"), p("Complete telemetry, controller, virtual-BMS, dashboard, persistence, and CSV recording behavior.", "cell")],
-            [p("Physical authority", "cell_bold"), p("Cerbo BMS selection remains manual. TEST is shadow arbitration; ACTIVE requires explicit commissioning gates.", "cell")],
+            [p("Physical authority", "cell_bold"), p("Cerbo BMS selection remains manual. Instance 100 applies fresh requests; CAN selection keeps them in shadow.", "cell")],
             [p("Control target", "cell_bold"), p("Hold the first selected unbalanced battery near 2.0 A by changing the aggregate charge-current request without assuming equal current sharing.", "cell")],
             [p("Safety fallback", "cell_bold"), p("Stale/incomplete telemetry or output-readback failure requests 55.0 V and 10.0 A; valid BMS and thermal limits can reduce it further.", "cell")],
         ], [42 * mm, 136 * mm], header=False),
@@ -511,18 +511,22 @@ def build() -> Path:
             ["Spread threshold", "30 mV strict", "A battery is eligible only above this value."],
             ["Useful share sample", "selected >= 0.25 A; total >= 0.5 A", "Minimum measurement quality needed to update current-share estimate."],
             ["Feed-forward EWMA", "0.20", "Smooths observed sharing fraction."],
-            ["Kp / Ki", "0.20 A/A / 0.002 A/(A*s)", "Slow correction around feed-forward estimate."],
+            ["Feed-forward gain", "1.0", "Scales feed-forward. Set 0.0 for PI-only characterization."],
+            ["Kp / Ki", "0.20 A/A / 0.02 A/(A*s)", "Slow correction around feed-forward estimate."],
             ["Integral bound", "+/- 10 A", "Limits accumulated correction."],
             ["Upward slew", "10 A/min", "Limits increases; decreases apply immediately."],
             ["Solar detection", "4 consecutive samples; 2.0 A tolerance", "Approximately 32 seconds before pause/resume classification."],
         ], [42 * mm, 42 * mm, 94 * mm]),
         p("Solar-limited pause", "h2"),
         p("When selected current is below target by more than 0.25 A and positive total current is more than 2.0 A below the held request for four samples, with no BMS/thermal/MOSFET reason, the controller remains in BALANCING but freezes share, feed-forward, P, and integral updates. It resumes after four recovery samples without resetting the held control values."),
+        p("PI-only characterization", "h2"),
+        p("Use feed-forward gain 0.0, Kp 0.20, Ki 0.10 A/(A*s), integral bound +/-10 A, target 2.0 A, and upward slew 10 A/min. Reset control immediately before the test. The initial aggregate request remains 2 A because integration is frozen while selected current is non-positive. Stop on oscillation, BMS/thermal limitation, or unstable sharing; restore gain 1.0 and Ki 0.02 afterward."),
+        p("Integral rise in A/min = Ki x current error in A x 60. At Ki 0.10, errors of 2.0, 1.5, 1.0, and 0.5 A produce 12 (slew-limited to 10), 9, 6, and 3 A/min respectively. The 10 A/min setting is a maximum output slew, not a constant PI ramp."),
     ]
 
     story += [PageBreak()] + section("5. Virtual BMS / DVCC arbitration")
     story += [
-        p("The service accepts a versioned Node-RED command containing requested voltage, aggregate current, charge-enable intent, timestamp, mode, and reason. It publishes the final effective result on standard virtual-BMS paths and retains requested-versus-effective diagnostics separately."),
+        p("The service accepts a versioned Node-RED command containing requested voltage, aggregate current, charge-enable intent, timestamp, and reason. Cerbo battery-monitor selection alone decides whether it is applied. The service publishes final output on standard virtual-BMS paths and retains requested-versus-effective diagnostics separately."),
         UmlDiagram("arbitration", 205),
         p("Figure 5 - Virtual-BMS arbitration sequence.", "small"),
         table([
@@ -530,8 +534,8 @@ def build() -> Path:
             ["CVL", "minimum of controller request, Dyness CVL, enabled Cerbo UI maximum charge voltage, and 56.5 V balancing ceiling."],
             ["CCL", "minimum of controller aggregate request, Dyness CCL, enabled Cerbo UI maximum charge current; then multiplied by thermal factor."],
             ["DCL", "Dyness DCL magnitude only while Dyness discharge permission is valid. The controller never invents an unavailable DCL."],
-            ["Charge enable", "Requires fresh valid context, controller charge intent in ACTIVE, positive effective CCL, and Dyness charge permission."],
-            ["TEST", "Publishes conservative shadow output and diagnostics; selected virtual BMS and commissioning gate are still required before ACTIVE."],
+            ["Authority", "APPLIED when instance 100 is selected; SHADOW for another valid selection; UNKNOWN when readback is unavailable."],
+            ["Charge enable", "Requires APPLIED authority, fresh valid context, controller charge intent, positive effective CCL, and Dyness charge permission."],
         ], [42 * mm, 136 * mm]),
         p("Normal and safety behavior", "h2"),
         bullet("NORMAL follows the Cerbo values at com.victronenergy.settings /Settings/SystemSetup/MaxChargeVoltage and MaxChargeCurrent. The service only reads these settings."),
@@ -551,11 +555,10 @@ def build() -> Path:
         table([
             ["Control", "Effect"],
             ["Automatic balancing", "Defaults ON after a fresh/reset state or Restore Defaults. ON selects eligible batteries automatically. OFF releases selection, resets control, and holds NORMAL using Cerbo Charge Control limits without disabling charging."],
-            ["TEST / ACTIVE", "ACTIVE requires virtual BMS selected manually in Cerbo, output readback verified, and valid configuration. TEST remains shadow mode."],
-            ["Cerbo BMS selection", "The Cerbo battery-monitor setting manually selects RS485 virtual BMS or normal Dyness CAN BMS. The balancer never changes it."],
+            ["Cerbo BMS selection", "The battery-monitor setting manually selects RS485 virtual BMS or normal Dyness CAN BMS and directly controls APPLIED/SHADOW authority. The balancer never changes it."],
             ["Reset control", "Clears share, feed-forward, integral, and solar-pause counters without changing Automatic balancing ON/OFF."],
             ["Restore Defaults", "Restores controller configuration, clears session/controller state, and turns Automatic balancing ON."],
-            ["Configuration", "Validates thresholds, bounds, gains, slew, and timing before replacing active controller settings."],
+            ["Configuration", "A dirty edit buffer survives telemetry refresh. Apply waits for matching acknowledgement; Discard restores active settings."],
             ["CSV logging", "Starts/stops a fixed-inventory file under /data/home/nodered/cerbo-balancer-csv/."],
         ], [48 * mm, 130 * mm]),
         p("Persistence and retention", "h2"),
@@ -569,10 +572,10 @@ def build() -> Path:
         p("7.1 Constant metadata block", "h2"),
         table([
             ["Metadata line", "Purpose"],
-            ["# schema_version=11", "CSV layout version."],
+            ["# schema_version=12", "CSV layout version."],
             ["# serial_port / # baud / # poll_interval_seconds", "Constant serial and timing context."],
             ["# timestamp_format=HH:MM:SS <Cerbo timezone>", "Clock source and display format."],
-            ["# virtual_bms_service / # virtual_bms_device_instance / # dvcc_output_mode", "Virtual BMS identity and recording-mode context."],
+            ["# virtual_bms_service / # virtual_bms_device_instance / # dvcc_authority", "Virtual BMS identity and Cerbo-selection authority context."],
             ["# status1_bits through # status5_bits", "CID2 0x44 bit explanations for hexadecimal Status1-5 columns."],
             ["# initial_addresses=&lt;addresses&gt;", "The fixed battery inventory captured at recording start."],
         ], [67 * mm, 111 * mm]),
@@ -592,7 +595,8 @@ def build() -> Path:
             ["2 - Per battery", "One complete battery_&lt;AA&gt;_* block for every address in initial_addresses, in ascending address order."],
             ["3 - Raw BMS limits", "ccl_a, dcl_a, charge_enabled, discharge_enabled"],
             ["4 - Controller request", "controller_requested_voltage_v, controller_requested_current_a, controller_charge_enabled, controller_command_reason, controller_command_fresh, controller_command_age_s"],
-            ["5 - Final virtual BMS", "virtual_bms_effective_cvl_v, virtual_bms_effective_ccl_a, virtual_bms_effective_dcl_a, virtual_bms_charge_enabled, virtual_bms_discharge_enabled, virtual_bms_allow_to_charge, virtual_bms_allow_to_discharge, virtual_bms_thermal_factor, virtual_bms_charge_blocked_by_status, virtual_bms_discharge_blocked_by_status, virtual_bms_charge_blocked_by_controller, virtual_bms_output_valid, virtual_bms_arbitration_reason"],
+            ["5 - Final virtual BMS output", "virtual_bms_effective_cvl_v, virtual_bms_effective_ccl_a, virtual_bms_effective_dcl_a, virtual_bms_charge_enabled, virtual_bms_discharge_enabled, virtual_bms_allow_to_charge, virtual_bms_allow_to_discharge, virtual_bms_thermal_factor, virtual_bms_charge_blocked_by_status, virtual_bms_discharge_blocked_by_status, virtual_bms_charge_blocked_by_controller, virtual_bms_output_valid, virtual_bms_arbitration_reason"],
+            ["6 - Authority and controller diagnostics", "virtual_bms_authority_state, virtual_bms_controller_request_applied, controller_feed_forward_gain, controller_feed_forward_unscaled_a, controller_feed_forward_effective_a, controller_p_term_a, controller_i_term_a, controller_output_saturated, controller_output_slew_limited"],
         ], [33 * mm, 145 * mm]),
     ]
 
@@ -620,13 +624,13 @@ def build() -> Path:
             ["Unavailable/invalid field", "Empty CSV field; it is never replaced by a plausible synthetic value."],
         ], [63 * mm, 115 * mm]),
         p("Requested versus effective", "h2"),
-        p("Controller-requested fields show the Node-RED proposal. virtual_bms_effective_* fields show the final output after Cerbo UI limits, Dyness CVL/CCL/DCL, permissions, thermal derating, command freshness, and safety rules. Effective values are the only values that would become DVCC authority if the virtual BMS is manually selected."),
+        p("Controller-requested fields show the Node-RED proposal. virtual_bms_effective_* fields show final output after Cerbo UI limits, Dyness limits/permissions, thermal derating, freshness, authority selection, and safety rules. authority_state and controller_request_applied distinguish shadow diagnostics from output applied through selected instance 100."),
         UmlDiagram("csv", 205),
         p("Figure 7 - CSV session lifecycle.", "small"),
         p("Session invariants", "h2"),
         bullet("The initial active inventory fixes the header and number of per-battery blocks. Batteries added later are ignored for that session."),
         bullet("If a battery from initial_addresses disappears, recording stops rather than producing misleading partial rows."),
-        bullet("After a service restart, the logger reads the existing metadata/header and continues the same file and sample number only when the schema matches exactly."),
+        bullet("After a service restart, the logger reads the existing metadata/header and continues the same file and sample number when its ordered columns remain a compatible subset. Columns added by a deployment begin with the next new recording file."),
     ]
 
     story += [PageBreak()] + section("8. Troubleshooting and operational interpretation")
@@ -637,12 +641,13 @@ def build() -> Path:
             ["SOLAR_LIMITED_PAUSE", "Cloud/available solar current is insufficient under the defined four-sample test. Selection and state remain BALANCING while control updates are frozen."],
             ["BMS_LIMITED / BMS_CCL_ZERO", "Dyness BMS advertised a lower CCL or zero CCL. The controller does not counteract it; inspect BMS permission/status and temperatures."],
             ["SAFETY_STOP_TELEMETRY", "Expected pack inventory or fresh addressed CID2 0x61 telemetry is missing/invalid. Verify RS485 ownership, cable, address inventory, and service health."],
-            ["VIRTUAL_BMS_NOT_SELECTED", "ACTIVE cannot use the virtual output until the user manually chooses Dyness RS485 virtual BMS in Cerbo battery-monitor settings."],
+            ["CAN_BMS_SELECTED_SHADOW", "A fresh request is logged but normal Cerbo/BMS limits remain effective because CAN BMS is selected."],
+            ["BMS_SELECTION_UNKNOWN_SHADOW", "Cerbo selection readback is unavailable; the service does not apply the controller request."],
             ["FULL_SOC_COMPLETE", "All expected batteries report integer SOC 100. Latch remains until master charge permission cycles OFF then ON for five seconds."],
             ["BATTERY_CHARGE_PATH_INTERRUPTED", "Selected pack charge MOSFET went OFF or local protection became active. Only that pack is released; other packs continue under normal BMS/DVCC rules."],
         ], [55 * mm, 123 * mm]),
         p("Commissioning reminder", "h2"),
-        p("Selecting the virtual BMS in Cerbo is manual and reversible. Validate standard virtual-BMS D-Bus readback and managed-charger behavior in TEST before changing mode to ACTIVE. No part of this documentation authorizes an automatic handover, a charger-specific write path, disabling DVCC, or transmitting any undocumented BMS control command."),
+        p("Selecting the virtual BMS in Cerbo is manual and reversible. It immediately makes fresh valid controller requests authoritative; selecting CAN returns them to shadow. No part of this documentation authorizes an automatic handover, a charger-specific write path, disabling DVCC, or transmitting any undocumented BMS control command."),
         p("Reference implementation", "h2"),
         p("The controller implementation is src/controller.js. The RS485 service, virtual BMS, arbitration, inventory, telemetry retention, and CSV logger are implemented in scripts/dyness_rs485_service.py. This PDF is generated by docs/pdf/generate_dyness_balancer_pdf.py.", "small"),
     ]

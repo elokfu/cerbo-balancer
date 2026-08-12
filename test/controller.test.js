@@ -1,7 +1,7 @@
 'use strict'
 
 const assert = require('assert/strict')
-const { STATES, MODES, CONTROLLER_VERSION, createBalancerController, validateConfig } = require('../src/controller')
+const { STATES, CONTROLLER_VERSION, DEFAULT_CONFIG, createBalancerController, validateConfig } = require('../src/controller')
 
 let clock = 1000000
 
@@ -45,7 +45,7 @@ function telemetry (batteryValues = [battery()], overrides = {}) {
       voltageLimitEnabled: true,
       currentLimitEnabled: true
     },
-    activeBms: { source: 'virtual', virtualSelected: true, label: 'RS485 virtual BMS active', activeBmsInstance: 100 },
+    activeBms: { source: 'virtual', virtualSelected: true, readbackValid: true, label: 'RS485 virtual BMS active', activeBmsInstance: 100 },
     expectedBatteries: batteryValues.map(item => item.address),
     expectedAddresses: batteryValues.map(item => item.address),
     inventory: { pendingRemoval: [] },
@@ -62,6 +62,8 @@ function sample (controller, batteryValues, overrides = {}) {
 
 assert.equal(validateConfig({}).valid, true)
 assert.equal(validateConfig({ feedForwardAlpha: 1.1 }).valid, false)
+assert.equal(validateConfig({ feedForwardGain: -0.1 }).valid, false)
+assert.equal(validateConfig({ feedForwardGain: 0 }).valid, true)
 assert.equal(validateConfig({ solarDetectionSamples: 3.5 }).valid, false)
 
 const normal = createBalancerController({ now: () => clock })
@@ -69,7 +71,7 @@ normal.handle({ type: 'telemetry', telemetry: telemetry(), timestamp: clock })
 assert.equal(normal.getState().state, STATES.BALANCING)
 assert.equal(normal.getState().selectedAddress, 2)
 assert.equal(normal.getState().automaticBalancingEnabled, true)
-assert.equal(command(normal.handle({ type: 'tick', timestamp: clock })).mode, MODES.TEST)
+assert.equal(command(normal.handle({ type: 'tick', timestamp: clock })).mode, undefined)
 
 // NORMAL follows the read-only limits configured in the Cerbo Charge Control UI.
 const uiLimits = createBalancerController({ now: () => clock })
@@ -164,12 +166,11 @@ limited.handle({ type: 'telemetry', telemetry: telemetry([battery(2, { current: 
 for (let index = 0; index < 5; index++) sample(limited, [battery(2, { current: 1 })], { ccl: 1, effectiveControl: { effectiveChargeCurrent: 1, thermalFactor: 1 } })
 assert.equal(limited.getState().solarLimited, false)
 
-// ACTIVE remains a separate manually selected and read-back-gated mode.
+// Cerbo selection is reflected as controller authority without a mode switch.
 const canSelected = createBalancerController({ now: () => clock })
-canSelected.handle({ type: 'telemetry', telemetry: telemetry([battery()], { activeBms: { source: 'can', virtualSelected: false, activeBmsInstance: 512 } }), timestamp: clock })
-canSelected.handle({ type: 'set_output_ready', value: true, timestamp: clock })
-canSelected.handle({ type: 'set_mode', value: MODES.ACTIVE, timestamp: clock })
-assert.equal(canSelected.getStatus().mode, MODES.TEST)
+canSelected.handle({ type: 'telemetry', telemetry: telemetry([battery()], { activeBms: { source: 'can', virtualSelected: false, readbackValid: true, activeBmsInstance: 512 } }), timestamp: clock })
+assert.equal(canSelected.getStatus().authorityState, 'SHADOW')
+assert.equal(canSelected.getStatus().mode, undefined)
 
 // Automatic balancing is ON for a fresh or reset controller and OFF persists.
 const automatic = createBalancerController({ now: () => clock })
@@ -190,7 +191,7 @@ assert.equal(automatic.getState().selectedAddress, null)
 const restoredOff = createBalancerController({ now: () => clock })
 restoredOff.handle({
   type: 'load',
-  state: { version: CONTROLLER_VERSION, state: STATES.NORMAL, mode: MODES.TEST, automaticBalancingEnabled: false },
+  state: { version: CONTROLLER_VERSION, state: STATES.NORMAL, automaticBalancingEnabled: false },
   config: {},
   timestamp: clock
 })
@@ -200,10 +201,10 @@ assert.equal(restoredOff.getState().state, STATES.NORMAL)
 
 // Version 3 enabled state migrates; missing enable state defaults ON.
 const migratedOff = createBalancerController({ now: () => clock })
-migratedOff.handle({ type: 'load', state: { version: 3, state: STATES.NORMAL, mode: MODES.TEST, enabled: false }, config: {}, timestamp: clock })
+migratedOff.handle({ type: 'load', state: { version: 3, state: STATES.NORMAL, mode: 'TEST', enabled: false }, config: {}, timestamp: clock })
 assert.equal(migratedOff.getState().automaticBalancingEnabled, false)
 const migratedDefault = createBalancerController({ now: () => clock })
-migratedDefault.handle({ type: 'load', state: { version: 3, state: STATES.NORMAL, mode: MODES.TEST }, config: {}, timestamp: clock })
+migratedDefault.handle({ type: 'load', state: { version: 3, state: STATES.NORMAL, mode: 'TEST' }, config: {}, timestamp: clock })
 assert.equal(migratedDefault.getState().automaticBalancingEnabled, true)
 
 // Reset control preserves the switch; restore defaults turns it ON.
@@ -211,3 +212,28 @@ restoredOff.handle({ type: 'reset_integrator', timestamp: clock })
 assert.equal(restoredOff.getState().automaticBalancingEnabled, false)
 restoredOff.handle({ type: 'restore_defaults', timestamp: clock })
 assert.equal(restoredOff.getState().automaticBalancingEnabled, true)
+
+// Version 4's exact legacy Ki is upgraded; custom Ki remains unchanged.
+const migratedKi = createBalancerController({ now: () => clock })
+migratedKi.handle({ type: 'load', state: { version: 4, state: STATES.NORMAL }, config: { ki: 0.002 }, timestamp: clock })
+assert.equal(migratedKi.getConfig().ki, 0.02)
+const customKi = createBalancerController({ now: () => clock })
+customKi.handle({ type: 'load', state: { version: 4, state: STATES.NORMAL }, config: { ki: 0.015 }, timestamp: clock })
+assert.equal(customKi.getConfig().ki, 0.015)
+
+// Configuration requests return a matching acceptance/rejection result.
+let configActions = customKi.handle({ type: 'configure', requestId: 'good', config: { ...customKi.getConfig(), ki: 0.1 }, timestamp: clock })
+assert.deepEqual(configActions.find(action => action.type === 'status').status.configurationResult, { requestId: 'good', accepted: true, errors: [] })
+configActions = customKi.handle({ type: 'configure', requestId: 'bad', config: { ...customKi.getConfig(), ki: 0 }, timestamp: clock })
+assert.equal(configActions.find(action => action.type === 'status').status.configurationResult.accepted, false)
+assert.equal(customKi.getConfig().ki, 0.1)
+
+// Feed-forward gain zero retains the 2 A startup request and removes dynamic contribution.
+const piOnly = createBalancerController({ now: () => clock })
+piOnly.handle({ type: 'configure', config: { ...piOnly.getConfig(), feedForwardGain: 0, ki: 0.1 }, timestamp: clock })
+let piActions = piOnly.handle({ type: 'telemetry', telemetry: telemetry([battery(2, { current: 0.5 })]), timestamp: clock })
+assert.equal(command(piActions).requestedCurrent, DEFAULT_CONFIG.feedForwardFallbackCurrent)
+assert.equal(command(piActions).effectiveFeedForwardCurrent, 0)
+piActions = sample(piOnly, [battery(2, { current: 0.5 })])
+assert.equal(command(piActions).effectiveFeedForwardCurrent, 0)
+assert.ok(piOnly.getState().aggregateCurrentCommand <= 2 + 10 * 8 / 60 + 1e-9)

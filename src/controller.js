@@ -6,8 +6,7 @@ const STATES = Object.freeze({
   SAFETY_STOP: 'SAFETY_STOP'
 })
 
-const MODES = Object.freeze({ TEST: 'TEST', ACTIVE: 'ACTIVE' })
-const CONTROLLER_VERSION = 4
+const CONTROLLER_VERSION = 5
 
 const DEFAULT_CONFIG = Object.freeze({
   balancingVoltageCeiling: 56.5,
@@ -20,8 +19,9 @@ const DEFAULT_CONFIG = Object.freeze({
   shareMinimumSelectedCurrent: 0.25,
   shareMinimumTotalCurrent: 0.5,
   feedForwardFallbackCurrent: 2.0,
+  feedForwardGain: 1.0,
   kp: 0.20,
-  ki: 0.002,
+  ki: 0.02,
   maxIntegralTerm: 10.0,
   aggregateCurrentMinimum: 0.0,
   aggregateCurrentMaximum: 100.0,
@@ -39,7 +39,6 @@ function emptyState () {
   return {
     version: CONTROLLER_VERSION,
     state: STATES.NORMAL,
-    mode: MODES.TEST,
     automaticBalancingEnabled: true,
     selectedAddress: null,
     selectedReason: null,
@@ -51,6 +50,7 @@ function emptyState () {
     rawSelectedShare: null,
     filteredSelectedShare: null,
     feedForwardCurrent: DEFAULT_CONFIG.feedForwardFallbackCurrent,
+    effectiveFeedForwardCurrent: DEFAULT_CONFIG.feedForwardFallbackCurrent,
     pTerm: 0,
     solarLimited: false,
     solarDeficitSamples: 0,
@@ -93,6 +93,9 @@ function validateConfig (candidate = {}) {
   if (!(config.feedForwardAlpha > 0 && config.feedForwardAlpha <= 1)) {
     errors.push('feedForwardAlpha must be greater than zero and at most one')
   }
+  if (!finite(config.feedForwardGain) || config.feedForwardGain < 0 || config.feedForwardGain > 1) {
+    errors.push('feedForwardGain must be between zero and one')
+  }
   if (!Number.isInteger(config.solarDetectionSamples)) {
     errors.push('solarDetectionSamples must be an integer')
   }
@@ -105,7 +108,7 @@ function createBalancerController (options = {}) {
   let config = { ...DEFAULT_CONFIG }
   let state = emptyState()
   let telemetry = null
-  let outputReady = false
+  let configurationResult = null
   const events = []
   const history = []
   let lastPersistenceKey = null
@@ -131,6 +134,7 @@ function createBalancerController (options = {}) {
     state.rawSelectedShare = null
     state.filteredSelectedShare = null
     state.feedForwardCurrent = config.feedForwardFallbackCurrent
+    state.effectiveFeedForwardCurrent = config.feedForwardGain * config.feedForwardFallbackCurrent
     state.pTerm = 0
     state.solarLimited = false
     state.solarDeficitSamples = 0
@@ -144,17 +148,17 @@ function createBalancerController (options = {}) {
   }
 
   function migrateState (persisted = {}) {
-    const migrated = { ...emptyState(), mode: persisted.mode || MODES.TEST }
+    const migrated = { ...emptyState() }
     if (typeof persisted.automaticBalancingEnabled === 'boolean') {
       migrated.automaticBalancingEnabled = persisted.automaticBalancingEnabled
     } else if (typeof persisted.enabled === 'boolean') {
       migrated.automaticBalancingEnabled = persisted.enabled
     }
     migrated.csvLogging = persisted.csvLogging || migrated.csvLogging
-    migrated.completionLatched = [3, CONTROLLER_VERSION].includes(persisted.version) && persisted.completionLatched === true
-    migrated.permissionOffSeen = [3, CONTROLLER_VERSION].includes(persisted.version) && persisted.permissionOffSeen === true
-    if ([3, CONTROLLER_VERSION].includes(persisted.version) && Object.values(STATES).includes(persisted.state)) {
-      const { enabled, autoManualMode, ...current } = persisted
+    migrated.completionLatched = [3, 4, CONTROLLER_VERSION].includes(persisted.version) && persisted.completionLatched === true
+    migrated.permissionOffSeen = [3, 4, CONTROLLER_VERSION].includes(persisted.version) && persisted.permissionOffSeen === true
+    if ([3, 4, CONTROLLER_VERSION].includes(persisted.version) && Object.values(STATES).includes(persisted.state)) {
+      const { enabled, autoManualMode, mode, ...current } = persisted
       Object.assign(migrated, current)
       migrated.version = CONTROLLER_VERSION
       if (typeof persisted.automaticBalancingEnabled !== 'boolean' && typeof enabled === 'boolean') {
@@ -366,20 +370,27 @@ function createBalancerController (options = {}) {
     state.feedForwardCurrent = state.filteredSelectedShare == null
       ? config.feedForwardFallbackCurrent
       : config.balanceBatteryCurrentTarget / state.filteredSelectedShare
+    state.effectiveFeedForwardCurrent = config.feedForwardGain * state.feedForwardCurrent
     state.pTerm = config.kp * error
     let nextIntegral = state.integralTerm
     if (dt > 0) nextIntegral = clamp(nextIntegral + config.ki * error * dt, -config.maxIntegralTerm, config.maxIntegralTerm)
-    const desired = clamp(state.feedForwardCurrent + state.pTerm + nextIntegral,
+    if (previousSample == null) {
+      state.integralTerm = nextIntegral
+      return commandFromState(error, 'BALANCING_CONTROL_INITIAL', totalCurrent)
+    }
+    const unconstrained = state.effectiveFeedForwardCurrent + state.pTerm + nextIntegral
+    const desired = clamp(unconstrained,
       config.aggregateCurrentMinimum, config.aggregateCurrentMaximum)
     const rise = config.currentIncreaseRatePerMin * dt / 60
     const request = desired > heldRequest ? Math.min(desired, heldRequest + rise) : desired
-    const saturated = desired !== state.feedForwardCurrent + state.pTerm + nextIntegral || request < desired
+    const slewLimited = request < desired
+    const saturated = desired !== unconstrained || slewLimited
     if (!(saturated && error > 0)) state.integralTerm = nextIntegral
     state.aggregateCurrentCommand = request
-    return commandFromState(error, 'BALANCING_CURRENT_CONTROL', totalCurrent, saturated)
+    return commandFromState(error, 'BALANCING_CURRENT_CONTROL', totalCurrent, saturated, slewLimited)
   }
 
-  function commandFromState (error, reason, totalCurrent = positiveTotalCurrent(), saturated = false) {
+  function commandFromState (error, reason, totalCurrent = positiveTotalCurrent(), saturated = false, slewLimited = false) {
     const settings = chargeControlSettings()
     const requestedVoltage = settings.voltageLimitEnabled === true && finite(settings.maxChargeVoltage)
       ? Math.min(config.balancingVoltageCeiling, settings.maxChargeVoltage)
@@ -393,10 +404,13 @@ function createBalancerController (options = {}) {
       iTerm: state.integralTerm,
       currentError: error,
       feedForwardCurrent: state.feedForwardCurrent,
+      feedForwardGain: config.feedForwardGain,
+      effectiveFeedForwardCurrent: state.effectiveFeedForwardCurrent,
       rawSelectedShare: state.rawSelectedShare,
       filteredSelectedShare: state.filteredSelectedShare,
       positiveTotalCurrent: totalCurrent,
       outputSaturated: saturated,
+      outputSlewLimited: slewLimited,
       solarLimited: state.solarLimited
     }
   }
@@ -427,18 +441,9 @@ function createBalancerController (options = {}) {
       releaseSelection()
       transition(STATES.NORMAL, timestamp, 'automatic balancing disabled')
       command = normalCommand('AUTOMATIC_BALANCING_OFF')
-    } else if (state.mode === MODES.ACTIVE && !virtualBmsSelected()) {
-      state.fault = null
-      resetControl()
-      releaseSelection()
-      transition(STATES.NORMAL, timestamp, 'virtual BMS is not selected')
-      command = normalCommand('VIRTUAL_BMS_NOT_SELECTED')
     } else if (!health.valid) {
       enterSafety(timestamp, health.lockout)
       command = safetyCommand('SAFETY_STOP_TELEMETRY')
-    } else if (state.mode === MODES.ACTIVE && !outputReady) {
-      enterSafety(timestamp, 'output readback is not verified')
-      command = safetyCommand('SAFETY_STOP_OUTPUT')
     } else {
       if (state.state === STATES.SAFETY_STOP) {
         state.fault = null
@@ -481,7 +486,7 @@ function createBalancerController (options = {}) {
       }
     }
 
-    const controllerCommand = { version: timestamp, timestamp, mode: state.mode, ...command }
+    const controllerCommand = { version: timestamp, timestamp, ...command }
     const selected = batteryByAddress(state.selectedAddress)
     history.push({
       timestamp,
@@ -524,18 +529,21 @@ function createBalancerController (options = {}) {
       system61Valid: battery.system61Valid === true,
       spread: finite(battery.spread) ? battery.spread : null
     }))
-    const selectionLockout = state.mode === MODES.ACTIVE && !virtualBmsSelected()
-      ? 'RS485 virtual BMS is not selected in Cerbo'
-      : null
+    const authorityState = telemetry && telemetry.activeBms
+      ? (telemetry.activeBms.readbackValid === true
+          ? (telemetry.activeBms.virtualSelected === true ? 'APPLIED' : 'SHADOW')
+          : 'UNKNOWN')
+      : 'UNKNOWN'
     return {
       state: state.state,
-      mode: state.mode,
       automaticBalancingEnabled: state.automaticBalancingEnabled,
       selectedAddress: state.selectedAddress,
       selectedReason: state.selectedReason,
       lastStopReason: state.lastStopReason,
       fault: state.fault,
-      lockout: selectionLockout || (state.mode === MODES.ACTIVE && !outputReady ? 'output readback is not verified' : health.lockout),
+      lockout: health.lockout,
+      authorityState,
+      controllerRequestApplied: Boolean(telemetry && telemetry.effectiveControl && telemetry.effectiveControl.controllerRequestApplied),
       telemetry: telemetry ? { ...telemetry, telemetryAge: health.age, valid: health.valid } : null,
       activeBms: telemetry && telemetry.activeBms ? { ...telemetry.activeBms } : null,
       virtualBmsSelected: virtualBmsSelected(),
@@ -552,6 +560,7 @@ function createBalancerController (options = {}) {
       rawSelectedShare: state.rawSelectedShare,
       filteredSelectedShare: state.filteredSelectedShare,
       feedForwardCurrent: state.feedForwardCurrent,
+      effectiveFeedForwardCurrent: state.effectiveFeedForwardCurrent,
       pTerm: state.pTerm,
       iTerm: state.integralTerm,
       aggregateCurrentCommand: state.aggregateCurrentCommand,
@@ -564,7 +573,7 @@ function createBalancerController (options = {}) {
       excludedBatteries,
       lastCommand: command,
       config: { ...config },
-      outputReady,
+      configurationResult,
       history: history.slice(),
       availableEvents: events.slice(-100),
       lastEvent: state.lastEvent
@@ -574,9 +583,12 @@ function createBalancerController (options = {}) {
   function handle (message = {}) {
     const timestamp = finite(message.timestamp) ? message.timestamp : now()
     if (message.type === 'load') {
-      const currentVersion = message.state && [3, CONTROLLER_VERSION].includes(message.state.version)
+      const persistedVersion = message.state && message.state.version
+      const currentVersion = [3, 4, CONTROLLER_VERSION].includes(persistedVersion)
       state = migrateState(message.state || {})
-      const validated = validateConfig(currentVersion ? (message.config || {}) : {})
+      const candidateConfig = currentVersion ? { ...(message.config || {}) } : {}
+      if (persistedVersion !== CONTROLLER_VERSION && candidateConfig.ki === 0.002) candidateConfig.ki = DEFAULT_CONFIG.ki
+      const validated = validateConfig(candidateConfig)
       config = validated.config
       resetControl()
       if (!validated.valid) {
@@ -590,10 +602,6 @@ function createBalancerController (options = {}) {
       return evaluate(timestamp)
     }
     if (message.type === 'tick') return evaluate(timestamp)
-    if (message.type === 'set_output_ready') {
-      outputReady = message.value === true
-      return evaluate(timestamp)
-    }
     if (message.type === 'set_automatic_balancing') {
       state.automaticBalancingEnabled = message.value === true
       if (!state.automaticBalancingEnabled) {
@@ -602,12 +610,6 @@ function createBalancerController (options = {}) {
         releaseSelection()
         transition(STATES.NORMAL, timestamp, 'automatic balancing disabled')
       }
-      return evaluate(timestamp)
-    }
-    if (message.type === 'set_mode') {
-      if (message.value === MODES.ACTIVE && outputReady && virtualBmsSelected() && validateConfig(config).valid) state.mode = MODES.ACTIVE
-      else if (message.value === MODES.TEST) state.mode = MODES.TEST
-      else record(timestamp, 'mode_rejected', 'ACTIVE requires selected virtual BMS, verified output, and valid configuration')
       return evaluate(timestamp)
     }
     if (message.type === 'set_csv_logging') {
@@ -642,6 +644,8 @@ function createBalancerController (options = {}) {
     }
     if (message.type === 'configure') {
       const validated = validateConfig(message.config)
+      const requestId = message.requestId == null ? null : String(message.requestId)
+      configurationResult = { requestId, accepted: validated.valid, errors: validated.errors.slice() }
       if (validated.valid) config = validated.config
       else record(timestamp, 'config_rejected', validated.errors.join('; '))
       return evaluate(timestamp)
@@ -658,4 +662,4 @@ function createBalancerController (options = {}) {
   }
 }
 
-module.exports = { STATES, MODES, CONTROLLER_VERSION, DEFAULT_CONFIG, validateConfig, createBalancerController }
+module.exports = { STATES, CONTROLLER_VERSION, DEFAULT_CONFIG, validateConfig, createBalancerController }

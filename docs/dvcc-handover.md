@@ -1,6 +1,6 @@
 # DVCC handover gate
 
-Direct-CAN read-only testing and the shadow controller do not disable DVCC.
+Direct-CAN read-only testing and shadow calculations do not disable DVCC.
 Before any future handover, back up settings and validate every active
 charging path: MultiPlus/VE.Bus, MPPT RS charger 0, MPPT RS charger 1, and
 other chargers. Confirm how each receives charge-voltage and charge-current
@@ -31,7 +31,9 @@ BMS remains `com.victronenergy.battery/512`.
 Select the source manually at **Settings → System Setup → Batteries → Battery
 monitor**. Selecting the virtual source makes its standard effective CVL,
 CCL, DCL, and permission paths the DVCC input. Selecting CAN restores the
-normal BMS. The balancer service never writes this setting.
+normal BMS. Authority becomes `APPLIED`, `SHADOW`, or `UNKNOWN` directly from
+this readback; there is no separate TEST/ACTIVE switch. The service never
+writes this setting.
 
 The Automatic balancing switch does not select a BMS. OFF keeps the controller
 in NORMAL and requests the Cerbo Charge Control limits through whichever BMS

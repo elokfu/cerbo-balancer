@@ -1,7 +1,8 @@
 ## Dyness Balancer
 
-`TEST` is shadow mode. `ACTIVE` is available only after the RS485 virtual BMS
-is selected manually in Cerbo and output readback is verified.
+Cerbo's battery-monitor selection controls authority. Selecting RS485 virtual
+BMS instance 100 applies fresh controller requests; selecting the CAN BMS keeps
+them in shadow. The balancer never changes this setting.
 
 The controller uses three states: `NORMAL`, `BALANCING`, and `SAFETY_STOP`.
 Automatic balancing defaults to ON after a fresh state or Restore Defaults.
@@ -10,10 +11,9 @@ no separate Start command. Turning it OFF releases the selection, resets the
 current controller, and keeps the state in `NORMAL` using the Cerbo Charge
 Control voltage and current. It does not disable charging.
 
-The Cerbo battery-monitor setting remains the only selector between the RS485
-virtual BMS and normal Dyness CAN BMS. `TEST`/`ACTIVE` controls whether the
-calculated request can be applied through the selected virtual BMS; it does not
-change the selected BMS source.
+The configuration editor protects unsaved values from telemetry refresh. Apply
+waits for controller acknowledgement; Discard restores active values. Normal
+defaults are feed-forward gain 1.0, Kp 0.20, and Ki 0.02.
 
 It selects the first battery in address order whose addressed CID2 `0x61`
 spread is strictly above 30 mV and controls aggregate charge allowance so that

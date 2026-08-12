@@ -48,7 +48,7 @@ reconnect count, poll duration, and the latest classified communication error.
 When the current poll is invalid but a valid sample is less than ten seconds
 old, measurement cards remain visible with a `STALE` banner. This is display
 only: the controller still treats the current telemetry as invalid and keeps
-ACTIVE blocked. After ten seconds, measurements are blanked.
+controller requests non-authoritative. After ten seconds, measurements are blanked.
 
 The controller page reports the selected battery, addressed integer SOC and
 extrema, state, completion latch, aggregate request, feed-forward share, PI
@@ -63,10 +63,9 @@ and holds `NORMAL` while requesting the Cerbo Charge Control voltage/current;
 it does not disable charging. Reset Control clears controller terms without
 changing the switch. Ordinary restarts preserve the persisted switch value.
 
-TEST/ACTIVE is independent of automatic selection. TEST performs shadow
-arbitration, while ACTIVE permits commands only through a manually selected
-and verified RS485 virtual BMS. The Cerbo battery-monitor menu remains the only
-selector between the RS485 virtual BMS and the Dyness CAN BMS.
+The Cerbo battery-monitor menu is the only authority selector. The RS485
+virtual BMS produces `APPLIED`; the CAN BMS produces `SHADOW`; missing
+selection readback produces `UNKNOWN`. The controller never changes it.
 
 The controller page also reports the active Cerbo BMS source and DeviceInstance
 (`CAN Dyness BMS active`, instance `512`, or `RS485 virtual BMS active`,
@@ -78,15 +77,16 @@ the selected battery monitor in VRM.
 
 The controller page includes live selected-current, selected Vmax/Vmin, and
 selected-spread graphs independently of controller state. Its configuration
-panel exposes the 30 mV spread threshold, current target, feed-forward filter,
-slow PI, aggregate bounds, solar tolerance, safety fallback, and freshness
-limit. Applying values validates them before saving the controller state to
+panel exposes the 30 mV spread threshold, current target, feed-forward filter
+and gain, slow PI, aggregate bounds, solar tolerance, safety fallback, and
+freshness limit. Unsaved edits are not overwritten by status refresh. Apply is
+single-flight and waits for a matching controller acknowledgement; Discard
+restores active values. Accepted settings are saved to
 `cerbo-balancer-state.json` and the active configuration to
 `cerbo-balancer-config.json`; both are restored on Node-RED startup.
 They use append-only JSON snapshots; startup restores the final valid snapshot.
 
-Mode starts at `TEST`. TEST calculates current-control commands
-but performs no charger or voltage write and does not require output readback.
-ACTIVE remains rejected unless fresh complete telemetry, valid configuration,
-and verified output readback are present; physical activation additionally
-requires the documented DVCC commissioning approval.
+For PI-only characterization, use feed-forward gain 0.0, Kp 0.20, Ki 0.10,
+integral limit 10 A, and 10 A/min upward slew. Reset control immediately before
+the test. The 2 A startup request remains; subsequent feed-forward contribution
+is zero. Restore feed-forward gain 1.0 and Ki 0.02 afterward.
