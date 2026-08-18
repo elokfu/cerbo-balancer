@@ -22,7 +22,7 @@ take_ownership() {
 take_ownership
 setpriv --init-groups --reuid nodered --regid nodered \
     python3 "$SERVICE" --port "$PORT" --baud 115200 \
-    --state-dir "$STATE_DIR" --quiet &
+    --state-dir "$STATE_DIR" --quiet --publisher-mode telemetry-only &
 poller_pid=$!
 
 cleanup() {
