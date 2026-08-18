@@ -13,3 +13,4 @@ cerbo-balancer-command.json
 cerbo-balancer-rs485-inventory.json
 cerbo-balancer-csv-logging.json
 cerbo-balancer-*.jsonl
+dyness-balancer-*.csv
