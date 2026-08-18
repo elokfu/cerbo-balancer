@@ -64,6 +64,7 @@ NORMAL_DISCOVERY_PROBES_PER_POLL = 2
 RECOVERY_DISCOVERY_PROBES_PER_POLL = len(EXPECTED_ADDRESSES)
 DISCOVERY_QUERY_TIMEOUT = 0.12
 VIRTUAL_BATTERY_SERVICE = "com.victronenergy.battery.rs485_dyness"
+GUARDIAN_BATTERY_SERVICE = "com.victronenergy.battery.rs485_dyness_guardian"
 VIRTUAL_BATTERY_SELECTION = "com.victronenergy.battery/100"
 CAN_BATTERY_SELECTION = "com.victronenergy.battery/512"
 
@@ -100,6 +101,8 @@ def active_bms_selection(values: dict[str, Any]) -> dict[str, Any]:
         instance == 100
         or battery_service == VIRTUAL_BATTERY_SELECTION
         or bms_service == VIRTUAL_BATTERY_SERVICE
+        or bms_service == GUARDIAN_BATTERY_SERVICE
+        or instance == 101
     ):
         source = "virtual"
         label = "RS485 virtual BMS active"
@@ -1451,9 +1454,17 @@ class ReadOnlyPoller:
 class DbusPublisher:
     """Small read-only virtual battery publisher for the Cerbo system bus."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        service_name: str = VIRTUAL_BATTERY_SERVICE,
+        device_instance: int = 100,
+        product_name: str = "Dyness RS485 virtual BMS",
+        publish: bool = True,
+        guardian: bool = False,
+    ) -> None:
         self.items: dict[str, Any] = {}
         self.available = False
+        self.publishing = False
         try:
             import dbus  # type: ignore
             import dbus.mainloop.glib  # type: ignore
@@ -1521,13 +1532,16 @@ class DbusPublisher:
             self.Root = Root
             self.bus = dbus.SystemBus()
             self.system_root = self.bus.get_object("com.victronenergy.system", "/")
-            self.name = dbus.service.BusName(VIRTUAL_BATTERY_SERVICE, self.bus)
             self.objects = {}
+            if not publish:
+                self.available = True
+                return
+            self.name = dbus.service.BusName(service_name, self.bus)
             defaults = {
-                "/DeviceInstance": dbus.UInt32(100),
+                "/DeviceInstance": dbus.UInt32(device_instance),
                 "/Connected": dbus.Boolean(True),
                 "/ProductId": dbus.UInt32(0xC065),
-                "/ProductName": dbus.String("Dyness RS485 virtual BMS"),
+                "/ProductName": dbus.String(product_name),
                 "/Mgmt/Connection": dbus.String("Dyness RS485"),
                 "/FirmwareVersion": dbus.String("0.1.0"),
                 "/Dc/0/Voltage": dbus.Double(53.0),
@@ -1563,10 +1577,20 @@ class DbusPublisher:
                 "/Control/AuthorityState": dbus.String("UNKNOWN"),
                 "/Control/ControllerRequestApplied": dbus.Boolean(False),
             }
+            if guardian:
+                defaults.update({
+                    "/Alarms/Communication": dbus.UInt32(2),
+                    "/Guardian/Mode": dbus.String("BOOTSTRAP"),
+                    "/Guardian/Ready": dbus.Boolean(False),
+                    "/Guardian/SourceAgeMs": dbus.UInt32(0xFFFFFFFF),
+                    "/Guardian/LastValidTimestamp": dbus.String(""),
+                    "/Guardian/Reason": dbus.String("waiting for valid RS485 telemetry"),
+                })
             for path, value in defaults.items():
                 self.objects[path] = Item(self.bus, path, value)
             self.root = Root(self.bus, self.objects)
             self.available = True
+            self.publishing = True
             threading.Thread(target=GLib.MainLoop().run, daemon=True).start()
         except Exception:
             self.available = False
@@ -1608,7 +1632,7 @@ class DbusPublisher:
         return value
 
     def update(self, snapshot: dict[str, Any]) -> None:
-        if not self.available:
+        if not self.available or not self.publishing:
             return
         dbus = self.dbus
         system = snapshot.get("system") or {}
@@ -1676,6 +1700,31 @@ class DbusPublisher:
             values["/Soc"] = dbus.Double(float(soc61))
         self._apply_values(values)
 
+    def update_guardian_status(
+        self,
+        mode: str,
+        ready: bool,
+        source_age_ms: int | None,
+        last_valid_timestamp: int | None,
+        reason: str,
+    ) -> None:
+        if not self.available or not self.publishing:
+            return
+        dbus = self.dbus
+        bounded_age = 0xFFFFFFFF if source_age_ms is None else max(
+            0, min(int(source_age_ms), 0xFFFFFFFF)
+        )
+        self._apply_values({
+            "/Alarms/Communication": dbus.UInt32(0 if mode == "NORMAL" else 2),
+            "/Guardian/Mode": dbus.String(mode),
+            "/Guardian/Ready": dbus.Boolean(ready),
+            "/Guardian/SourceAgeMs": dbus.UInt32(bounded_age),
+            "/Guardian/LastValidTimestamp": dbus.String(
+                str(last_valid_timestamp) if last_valid_timestamp is not None else ""
+            ),
+            "/Guardian/Reason": dbus.String(reason),
+        })
+
     def _apply_values(self, values: dict[str, Any]) -> None:
         """Create missing D-Bus paths lazily and update changed values."""
         dbus = self.dbus
@@ -1714,6 +1763,11 @@ def main() -> int:
     parser.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
     parser.add_argument("--once", action="store_true")
     parser.add_argument(
+        "--publisher-mode",
+        choices=("integrated", "telemetry-only"),
+        default="integrated",
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="suppress continuous JSON snapshots on stdout (ignored with --once)",
@@ -1731,7 +1785,7 @@ def main() -> int:
     store.ensure_json("cerbo-balancer-rs485-inventory.json", {"version": 1, "activeAddresses": [], "pendingRemoval": [], "lastSeenAt": {}})
     store.ensure_json("cerbo-balancer-sessions.jsonl", {})
     poller = ReadOnlyPoller(args.port, args.baud, args.timeout, store.read_json("cerbo-balancer-rs485-inventory.json"))
-    dbus_publisher = DbusPublisher()
+    dbus_publisher = DbusPublisher(publish=args.publisher_mode == "integrated")
     csv_logger = CsvLogger(args.state_dir)
     telemetry_store = RollingTelemetryStore(args.state_dir)
     while True:

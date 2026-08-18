@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+exec 2>&1
+
+SERVICE=/data/home/nodered/cerbo-balancer/dyness_bms_guardian.py
+LOCK_FILE=/var/run/cerbo-balancer-guardian.lock
+
+exec 9>"$LOCK_FILE"
+flock 9
+
+exec setpriv --init-groups --reuid nodered --regid nodered \
+    python3 "$SERVICE"

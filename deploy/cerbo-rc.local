@@ -1,5 +1,16 @@
 
 # Dyness RS485 balancer persistent service
+GUARDIAN_SERVICE_DIR=/var/volatile/services/cerbo-balancer-guardian
+GUARDIAN_RUN=/data/home/nodered/cerbo-balancer/cerbo-balancer-guardian.run
+GUARDIAN_LOG_RUN=/data/home/nodered/cerbo-balancer/cerbo-balancer-guardian-log.run
+if [ -x "$GUARDIAN_RUN" ] && [ -x "$GUARDIAN_LOG_RUN" ]; then
+    mkdir -p "$GUARDIAN_SERVICE_DIR/log" /var/log/cerbo-balancer-guardian
+    cp "$GUARDIAN_RUN" "$GUARDIAN_SERVICE_DIR/run"
+    cp "$GUARDIAN_LOG_RUN" "$GUARDIAN_SERVICE_DIR/log/run"
+    chmod 0755 "$GUARDIAN_SERVICE_DIR/run" "$GUARDIAN_SERVICE_DIR/log/run"
+    ln -sfn "$GUARDIAN_SERVICE_DIR" /service/cerbo-balancer-guardian
+fi
+
 BALANCER_SERVICE_DIR=/var/volatile/services/cerbo-balancer-rs485
 BALANCER_RUN=/data/home/nodered/cerbo-balancer/cerbo-balancer-rs485.run
 BALANCER_LOG_RUN=/data/home/nodered/cerbo-balancer/cerbo-balancer-rs485-log.run
