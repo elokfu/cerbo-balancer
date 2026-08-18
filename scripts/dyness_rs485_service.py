@@ -1674,11 +1674,16 @@ class DbusPublisher:
         # last-known-good SOC stays in place.
         if soc61_is_valid(soc61):
             values["/Soc"] = dbus.Double(float(soc61))
+        self._apply_values(values)
+
+    def _apply_values(self, values: dict[str, Any]) -> None:
+        """Create missing D-Bus paths lazily and update changed values."""
+        dbus = self.dbus
         changed = dbus.Dictionary({}, signature="sa{sv}")
         for path, value in values.items():
             item = self.objects.get(path)
             if item is None:
-                item = Item(self.bus, path, value)
+                item = self.Item(self.bus, path, value)
                 self.objects[path] = item
                 changed[path] = dbus.Dictionary(
                     {"Value": value, "Text": dbus.String(str(value))},
@@ -1694,6 +1699,12 @@ class DbusPublisher:
             self.root.ItemsChanged(changed)
 
 
+def emit_snapshot(snapshot: dict[str, Any], quiet: bool, once: bool) -> None:
+    """Write diagnostic JSON unless a long-running service requested quiet output."""
+    if once or not quiet:
+        print(json.dumps(snapshot, separators=(",", ":")), flush=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", default=DEFAULT_PORT)
@@ -1702,6 +1713,11 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=0.7)
     parser.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
     parser.add_argument("--once", action="store_true")
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="suppress continuous JSON snapshots on stdout (ignored with --once)",
+    )
     args = parser.parse_args()
     store = JsonlStore(args.state_dir)
     store.ensure_json("cerbo-balancer-config.json", {"automaticBalancingEnabled": True})
@@ -1729,7 +1745,7 @@ def main() -> int:
         store.write_json("cerbo-balancer-rs485-inventory.json", poller.export_inventory())
         published_snapshot = telemetry_store.record(snapshot)
         dbus_publisher.update(published_snapshot)
-        print(json.dumps(published_snapshot, separators=(",", ":")), flush=True)
+        emit_snapshot(published_snapshot, args.quiet, args.once)
         if args.once:
             return 0
         # Keep the requested cadence measured from the start of each poll.

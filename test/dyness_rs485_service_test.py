@@ -999,6 +999,59 @@ class SocPublishTests(unittest.TestCase):
         for value in (None, -1, 101, 50.0, "50", True, False):
             self.assertFalse(soc61_is_valid(value), repr(value))
 
+    def test_dbus_soc_is_created_lazily_and_retained(self):
+        class FakeDictionary(dict):
+            def __init__(self, *args, **kwargs):
+                kwargs.pop("signature", None)
+                super().__init__(*args, **kwargs)
+
+        class FakeDbus:
+            Dictionary = FakeDictionary
+            String = str
+
+        class FakeItem:
+            def __init__(self, bus, path, value):
+                self.bus = bus
+                self.path = path
+                self.value = value
+
+        class FakeRoot:
+            def __init__(self):
+                self.changes = []
+
+            def ItemsChanged(self, changed):
+                self.changes.append(changed)
+
+        publisher = object.__new__(service.DbusPublisher)
+        publisher.dbus = FakeDbus
+        publisher.Item = FakeItem
+        publisher.bus = object()
+        publisher.objects = {}
+        publisher.root = FakeRoot()
+
+        publisher._apply_values({"/Voltage": 52.0})
+        self.assertNotIn("/Soc", publisher.objects)
+
+        publisher._apply_values({"/Soc": 100.0})
+        self.assertIsInstance(publisher.objects["/Soc"], FakeItem)
+        self.assertEqual(publisher.objects["/Soc"].value, 100.0)
+
+        publisher._apply_values({"/Voltage": 52.1})
+        self.assertEqual(publisher.objects["/Soc"].value, 100.0)
+
+    def test_quiet_mode_suppresses_only_continuous_stdout(self):
+        import contextlib
+        import io
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            service.emit_snapshot({"valid": True}, quiet=True, once=False)
+        self.assertEqual(output.getvalue(), "")
+
+        with contextlib.redirect_stdout(output):
+            service.emit_snapshot({"valid": True}, quiet=True, once=True)
+        self.assertEqual(output.getvalue(), '{"valid":true}\n')
+
 
 if __name__ == "__main__":
     unittest.main()

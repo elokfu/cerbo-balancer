@@ -1,10 +1,17 @@
 #!/bin/sh
 set -eu
+exec 2>&1
 
 PORT=/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A602K5MM-if00-port0
 STOP_HOOK=/opt/victronenergy/serial-starter/stop-tty.sh
 SERVICE=/data/home/nodered/cerbo-balancer/dyness_rs485_service.py
 STATE_DIR=/data/home/nodered
+LOCK_FILE=/var/run/cerbo-balancer-rs485.lock
+
+# Keep overlapping or stale runit supervisors from starting a second serial
+# client. The kernel releases this descriptor lock when the wrapper exits.
+exec 9>"$LOCK_FILE"
+flock 9
 
 take_ownership() {
     if [ -x "$STOP_HOOK" ] && [ -e "$PORT" ]; then
@@ -14,7 +21,8 @@ take_ownership() {
 
 take_ownership
 setpriv --init-groups --reuid nodered --regid nodered \
-    python3 "$SERVICE" --port "$PORT" --baud 115200 --state-dir "$STATE_DIR" &
+    python3 "$SERVICE" --port "$PORT" --baud 115200 \
+    --state-dir "$STATE_DIR" --quiet &
 poller_pid=$!
 
 cleanup() {
