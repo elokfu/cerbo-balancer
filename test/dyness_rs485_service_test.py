@@ -345,7 +345,7 @@ class DynessServiceTests(unittest.TestCase):
             self.assertTrue(result["written"])
             contents = (Path(root) / service.CSV_LOG_DIRECTORY / "arbitration.csv").read_text(encoding="utf-8")
             self.assertIn("# virtual_bms_service=com.victronenergy.battery.rs485_dyness", contents)
-            self.assertIn("# schema_version=13", contents)
+            self.assertIn("# schema_version=14", contents)
             self.assertIn("# dvcc_authority=cerbo_battery_monitor_selection", contents)
             self.assertIn("controller_requested_voltage_v", contents)
             self.assertIn("virtual_bms_effective_ccl_a", contents)

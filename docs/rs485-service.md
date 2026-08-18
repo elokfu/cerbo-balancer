@@ -197,3 +197,8 @@ row uses local Cerbo time as
 `HH:MM:SS` in the configured `CERBO_BALANCER_TIMEZONE` (default
 `Europe/Berlin`) and includes a monotonic `sample_number`, so recordings longer than
 24 hours remain unambiguous without storing a calendar date.
+
+## Per-battery capacity SOC
+
+Verified CID2 `0x42` extended 24-bit mAh fields provide independent SOC for each battery. The integer floor of remaining/total capacity is used only by balancing. A separate persisted display SOC integrates current with independent directional gains and resets to 100% when that battery's fresh effective 16-cell maximum reaches 3.500 V. CID2 `0x61` remains authoritative for guardian SOC, global charge limits, DVCC, and system SOC. Legacy capacity tails are rejected.
+

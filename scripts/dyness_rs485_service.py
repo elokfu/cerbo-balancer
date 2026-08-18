@@ -436,6 +436,9 @@ class CsvLogger:
     summary_columns = [
         "timestamp", "sample_number", "system_voltage_v", "soc_percent", "bms_temperature_c",
         "vmin_v", "vmax_v", "spread_mv", "battery_current_a",
+        "capacity_soc_integer_min", "capacity_soc_integer_max", "capacity_soc_integer_spread",
+        "capacity_soc_interpolated_min", "capacity_soc_interpolated_max", "capacity_soc_interpolated_spread",
+        "capacity_soc_leaders", "capacity_soc_trailers", "capacity_soc_events",
     ]
     control_columns = [
         "ccl_a", "dcl_a", "charge_enabled", "discharge_enabled",
@@ -458,6 +461,11 @@ class CsvLogger:
     ]
     battery_fields = [
         "present", "valid", "voltage_v", "current_a", "soc_percent",
+        "reported_soc_percent", "capacity_soc_raw_percent", "capacity_soc_integer_percent",
+        "interpolated_soc_percent", "soc_interpolation_state", "soc_interpolation_anchor",
+        "remaining_capacity_raw_mah", "total_capacity_raw_mah",
+        "remaining_capacity_ah", "total_capacity_ah", "soc_charge_gain", "soc_discharge_gain",
+        "soc_battery_vmax_v", "soc_full_reset", "soc_events",
         "vmin_v", "vmin_location", "vmax_v", "vmax_location", "spread_mv",
         "status1", "status2",
         "status3", "status4", "status5",
@@ -616,6 +624,7 @@ class CsvLogger:
         system = snapshot.get("system") or {}
         limits = snapshot.get("limits") or {}
         aggregate = snapshot.get("aggregate") or {}
+        capacity_soc = snapshot.get("capacitySoc") or {}
         control_output = snapshot.get("effectiveControl") or {}
         status_flags = limits.get("statusFlags") or {}
         command_age_s = control_output.get("commandAgeMs")
@@ -634,6 +643,15 @@ class CsvLogger:
             "vmax_v": self._format_voltage(aggregate.get("vmax"), 3),
             "spread_mv": self._format_spread_mv(aggregate.get("spread")),
             "battery_current_a": self._format_number(aggregate.get("summedBatteryCurrent")),
+            "capacity_soc_integer_min": capacity_soc.get("integerMinimum"),
+            "capacity_soc_integer_max": capacity_soc.get("integerMaximum"),
+            "capacity_soc_integer_spread": capacity_soc.get("integerSpread"),
+            "capacity_soc_interpolated_min": self._format_number(capacity_soc.get("interpolatedMinimum"), 3),
+            "capacity_soc_interpolated_max": self._format_number(capacity_soc.get("interpolatedMaximum"), 3),
+            "capacity_soc_interpolated_spread": self._format_number(capacity_soc.get("interpolatedSpread"), 3),
+            "capacity_soc_leaders": json.dumps(capacity_soc.get("leaders") or [], separators=(",", ":")),
+            "capacity_soc_trailers": json.dumps(capacity_soc.get("trailers") or [], separators=(",", ":")),
+            "capacity_soc_events": json.dumps(capacity_soc.get("events") or [], separators=(",", ":")),
             "ccl_a": self._format_number(limits.get("chargeCurrent")),
             "dcl_a": self._format_number(limits.get("dischargeCurrentSigned")),
             "charge_enabled": status_flags.get("chargeEnabled"),
@@ -673,6 +691,21 @@ class CsvLogger:
                 continue
             prefix = f"battery_{address:02d}_"; row[prefix + "present"] = True; row[prefix + "valid"] = battery.get("valid"); row[prefix + "voltage_v"] = self._format_voltage(battery.get("voltage")); row[prefix + "current_a"] = self._format_number(battery.get("current"))
             row[prefix + "soc_percent"] = battery.get("soc") if isinstance(battery.get("soc"), int) else ""
+            row[prefix + "reported_soc_percent"] = battery.get("socReportedPercent") if isinstance(battery.get("socReportedPercent"), int) else ""
+            row[prefix + "capacity_soc_raw_percent"] = self._format_number(battery.get("socCapacityRawPercent"), 6)
+            row[prefix + "capacity_soc_integer_percent"] = battery.get("socCapacityIntegerPercent")
+            row[prefix + "interpolated_soc_percent"] = self._format_number(battery.get("socInterpolatedPercent"), 3)
+            row[prefix + "soc_interpolation_state"] = battery.get("socInterpolationState")
+            row[prefix + "soc_interpolation_anchor"] = battery.get("socInterpolationAnchor")
+            row[prefix + "remaining_capacity_raw_mah"] = battery.get("remainingCapacityRawMah")
+            row[prefix + "total_capacity_raw_mah"] = battery.get("totalCapacityRawMah")
+            row[prefix + "remaining_capacity_ah"] = self._format_number(battery.get("remainingCapacityAh"), 3)
+            row[prefix + "total_capacity_ah"] = self._format_number(battery.get("totalCapacityAh"), 3)
+            row[prefix + "soc_charge_gain"] = self._format_number(battery.get("socChargeGain"), 6)
+            row[prefix + "soc_discharge_gain"] = self._format_number(battery.get("socDischargeGain"), 6)
+            row[prefix + "soc_battery_vmax_v"] = self._format_cell_voltage(battery.get("socBatteryVmax"))
+            row[prefix + "soc_full_reset"] = battery.get("socFullReset")
+            row[prefix + "soc_events"] = json.dumps(battery.get("socEvents") or [], separators=(",", ":"))
             row[prefix + "vmin_v"] = self._format_voltage(battery.get("vmin"), 3)
             row[prefix + "vmax_v"] = self._format_voltage(battery.get("vmax"), 3)
             row[prefix + "spread_mv"] = self._format_spread_mv(battery.get("spread"))
@@ -699,7 +732,7 @@ class CsvLogger:
         row = {column: row.get(column, "") for column in columns}
         with target.open("a", newline="", encoding="utf-8") as stream:
             if not exists:
-                stream.write(f"# schema_version=13\n# serial_port={snapshot.get('serialPort')}\n# baud={snapshot.get('baud')}\n# poll_interval_seconds=8\n# timestamp_format=HH:MM:SS {self.timezone_name}\n# virtual_bms_service=com.victronenergy.battery.rs485_dyness\n# virtual_bms_device_instance=100\n# dvcc_authority=cerbo_battery_monitor_selection\n# status1_bits=bit7 pack under-voltage protection; bit6 charge temperature protection; bit5 discharge temperature protection; bit4 discharge over-current protection; bit3 reserved; bit2 charge over-current protection; bit1 cell under-voltage protection; bit0 over-voltage protection\n# status2_bits=bit7-bit4 reserved; bit3 module power active; bit2 discharge MOSFET on; bit1 charge MOSFET on; bit0 precharge MOSFET on\n# status3_bits=bit7 effective charging; bit6 effective discharging; bit5 heater active; bit4-bit2 reserved; bit3 fully charged; bit2-bit1 reserved; bit0 buzzer active\n# status4_bits=bit7-bit0 cell voltage-check faults for cells 8-1 respectively\n# status5_bits=bit7-bit0 cell voltage-check faults for cells 16-9 respectively\n# initial_addresses={','.join(str(address) for address in self.initial_addresses)}\n")
+                stream.write(f"# schema_version=14\n# serial_port={snapshot.get('serialPort')}\n# baud={snapshot.get('baud')}\n# poll_interval_seconds=8\n# timestamp_format=HH:MM:SS {self.timezone_name}\n# virtual_bms_service=com.victronenergy.battery.rs485_dyness\n# virtual_bms_device_instance=100\n# dvcc_authority=cerbo_battery_monitor_selection\n# status1_bits=bit7 pack under-voltage protection; bit6 charge temperature protection; bit5 discharge temperature protection; bit4 discharge over-current protection; bit3 reserved; bit2 charge over-current protection; bit1 cell under-voltage protection; bit0 over-voltage protection\n# status2_bits=bit7-bit4 reserved; bit3 module power active; bit2 discharge MOSFET on; bit1 charge MOSFET on; bit0 precharge MOSFET on\n# status3_bits=bit7 effective charging; bit6 effective discharging; bit5 heater active; bit4-bit2 reserved; bit3 fully charged; bit2-bit1 reserved; bit0 buzzer active\n# status4_bits=bit7-bit0 cell voltage-check faults for cells 8-1 respectively\n# status5_bits=bit7-bit0 cell voltage-check faults for cells 16-9 respectively\n# initial_addresses={','.join(str(address) for address in self.initial_addresses)}\n")
                 csv.DictWriter(stream, fieldnames=columns).writeheader()
             csv.DictWriter(stream, fieldnames=columns).writerow(row)
         self.next_sample_number += 1
@@ -1022,8 +1055,245 @@ class Cell16Estimator:
                 del self._state[address]
 
 
+class CapacitySocEstimator:
+    """Per-battery display SOC interpolation from verified CID2 42 capacity."""
+
+    VERSION = 1
+    FULL_CELL_V = 3.500
+    MAX_GAP_MS = 20_000
+    DEFAULT_CHARGE_GAIN = 1.04
+    DEFAULT_DISCHARGE_GAIN = 1.08
+    GAIN_ALPHA = 0.20
+    GAIN_MIN = 0.90
+    GAIN_MAX = 1.20
+    STATE_FILE = "cerbo-balancer-capacity-soc.json"
+    BACKUP_FILE = "cerbo-balancer-capacity-soc.json.bak"
+
+    def __init__(self, root: str | None = None) -> None:
+        self.root = Path(root) if root else None
+        self._state: dict[int, dict[str, Any]] = {}
+        self._event_baseline: dict[str, Any] | None = None
+        if self.root:
+            self.root.mkdir(parents=True, exist_ok=True)
+            self._load()
+
+    @staticmethod
+    def _valid_number(value: Any) -> bool:
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+    @classmethod
+    def _fresh_capacity(cls, battery: dict[str, Any]) -> bool:
+        remaining = battery.get("remainingCapacityRawMah")
+        total = battery.get("totalCapacityRawMah")
+        return bool(
+            battery.get("valid") is True and
+            battery.get("capacitySource") == "EXTENDED_24BIT_MAH" and
+            isinstance(remaining, int) and isinstance(total, int) and
+            total > 0 and 0 <= remaining <= total * 1.05 and
+            cls._valid_number(battery.get("current"))
+        )
+
+    @classmethod
+    def _fresh_vmax(cls, battery: dict[str, Any]) -> float | None:
+        cells = battery.get("effectiveCells") or []
+        values = [cell.get("voltage") for cell in cells]
+        if battery.get("valid") is not True or len(values) != 16 or not all(cls._valid_number(v) for v in values):
+            return None
+        return max(float(value) for value in values)
+
+    def _new_state(self) -> dict[str, Any]:
+        return {
+            "chargeGain": self.DEFAULT_CHARGE_GAIN,
+            "dischargeGain": self.DEFAULT_DISCHARGE_GAIN,
+            "estimatedSoc": None,
+            "lastTimestamp": None,
+            "lastCurrent": None,
+            "lastRemainingMah": None,
+            "intervalAh": 0.0,
+            "fullResetActive": False,
+            "interpolationState": "UNINITIALIZED",
+            "anchor": None,
+        }
+
+    def _load(self) -> None:
+        for name in (self.STATE_FILE, self.BACKUP_FILE):
+            try:
+                value = json.loads((self.root / name).read_text(encoding="utf-8"))
+                if value.get("version") != self.VERSION or not isinstance(value.get("batteries"), dict):
+                    continue
+                for key, saved in value["batteries"].items():
+                    state = self._new_state()
+                    state.update(saved)
+                    self._state[int(key)] = state
+                return
+            except (OSError, ValueError, TypeError):
+                continue
+
+    def _save(self) -> None:
+        if not self.root:
+            return
+        payload = {"version": self.VERSION, "batteries": {str(k): v for k, v in self._state.items()}}
+        target = self.root / self.STATE_FILE
+        backup = self.root / self.BACKUP_FILE
+        temporary = self.root / f".{self.STATE_FILE}.tmp"
+        if target.exists():
+            try:
+                existing = json.loads(target.read_text(encoding="utf-8"))
+                if existing.get("version") == self.VERSION:
+                    backup_tmp = self.root / f".{self.BACKUP_FILE}.tmp"
+                    backup_tmp.write_text(json.dumps(existing, separators=(",", ":")), encoding="utf-8")
+                    os.replace(backup_tmp, backup)
+            except (OSError, ValueError, TypeError):
+                pass
+        temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+        os.replace(temporary, target)
+
+    @staticmethod
+    def _gain_for_current(state: dict[str, Any], current: float) -> float:
+        return state["chargeGain"] if current >= 0 else state["dischargeGain"]
+
+    def _update_one(self, battery: dict[str, Any], timestamp_ms: int) -> list[str]:
+        address = int(battery["address"])
+        state = self._state.setdefault(address, self._new_state())
+        events: list[str] = []
+        battery["socReportedPercent"] = battery.get("soc")
+        battery["socChargeGain"] = state["chargeGain"]
+        battery["socDischargeGain"] = state["dischargeGain"]
+        battery["socFullReset"] = False
+        if not self._fresh_capacity(battery):
+            state.update({"estimatedSoc": None, "lastTimestamp": None, "lastCurrent": None, "intervalAh": 0.0})
+            battery.update({
+                "socCapacityRawPercent": None, "socCapacityIntegerPercent": None,
+                "socInterpolatedPercent": None, "socInterpolationState": "INVALID_CAPACITY",
+                "socInterpolationAnchor": None, "socEvents": events,
+            })
+            return events
+
+        remaining = int(battery["remainingCapacityRawMah"])
+        total = int(battery["totalCapacityRawMah"])
+        raw_soc = remaining / total * 100.0
+        integer_soc = int(raw_soc // 1)
+        vmax = self._fresh_vmax(battery)
+        battery["socCapacityRawPercent"] = raw_soc
+        battery["socCapacityIntegerPercent"] = integer_soc
+        battery["socBatteryVmax"] = vmax
+
+        last_timestamp = state.get("lastTimestamp")
+        duplicate = last_timestamp == timestamp_ms
+        gap = last_timestamp is not None and timestamp_ms - last_timestamp > self.MAX_GAP_MS
+        if gap:
+            state.update({"estimatedSoc": None, "lastTimestamp": None, "lastCurrent": None, "intervalAh": 0.0})
+            last_timestamp = None
+
+        if vmax is not None and vmax >= self.FULL_CELL_V:
+            if not state.get("fullResetActive"):
+                events.append("SOC_INTERPOLATED_FULL_RESET")
+                battery["socFullReset"] = True
+            state.update({
+                "estimatedSoc": 100.0, "fullResetActive": True,
+                "interpolationState": "VMAX_FULL_RESET", "anchor": "Vmax >= 3.500 V reset",
+                "intervalAh": 0.0,
+            })
+        elif not duplicate:
+            state["fullResetActive"] = False
+            current = float(battery["current"])
+            previous_remaining = state.get("lastRemainingMah")
+            if state.get("estimatedSoc") is None:
+                if raw_soc < 100.0:
+                    state.update({"estimatedSoc": raw_soc, "interpolationState": "CAPACITY_ANCHOR", "anchor": "capacity anchor"})
+            elif last_timestamp is not None and state.get("lastCurrent") is not None:
+                dt_hours = (timestamp_ms - last_timestamp) / 3_600_000.0
+                average_current = (float(state["lastCurrent"]) + current) / 2.0
+                raw_delta_ah = average_current * dt_hours
+                state["intervalAh"] += raw_delta_ah
+                gain = self._gain_for_current(state, average_current)
+                state["estimatedSoc"] += raw_delta_ah * gain / (total / 1000.0) * 100.0
+                state.update({"interpolationState": "COULOMB_COUNTING", "anchor": "coulomb counting"})
+
+            capacity_changed = previous_remaining is not None and remaining != previous_remaining
+            previous_raw_soc = previous_remaining / total * 100.0 if previous_remaining is not None else None
+            if capacity_changed and raw_soc < 100.0:
+                if previous_raw_soc is not None and previous_raw_soc < 100.0:
+                    observed_ah = (remaining - previous_remaining) / 1000.0
+                    integrated_ah = state.get("intervalAh", 0.0)
+                    same_direction = observed_ah * integrated_ah > 0
+                    observed_gain = observed_ah / integrated_ah if same_direction and integrated_ah else None
+                    if observed_gain is not None and self.GAIN_MIN <= observed_gain <= self.GAIN_MAX:
+                        key = "chargeGain" if observed_ah > 0 else "dischargeGain"
+                        state[key] = (1.0 - self.GAIN_ALPHA) * state[key] + self.GAIN_ALPHA * observed_gain
+                    else:
+                        events.append("SOC_CAPACITY_CORRECTION")
+                state.update({"estimatedSoc": raw_soc, "interpolationState": "CAPACITY_ANCHOR", "anchor": "capacity anchor", "intervalAh": 0.0})
+
+        if not duplicate:
+            state.update({
+                "lastTimestamp": timestamp_ms,
+                "lastCurrent": float(battery["current"]),
+                "lastRemainingMah": remaining,
+            })
+        interpolated = state.get("estimatedSoc")
+        battery.update({
+            "socInterpolatedPercent": max(0.0, min(100.0, interpolated)) if self._valid_number(interpolated) else None,
+            "socInterpolationState": state.get("interpolationState"),
+            "socInterpolationAnchor": state.get("anchor"),
+            "socChargeGain": state["chargeGain"],
+            "socDischargeGain": state["dischargeGain"],
+            "socEvents": events,
+        })
+        return events
+
+    def update(self, batteries: list[dict[str, Any]], timestamp_ms: int, known_addresses: set[int]) -> dict[str, Any]:
+        for address in list(self._state):
+            if address not in known_addresses:
+                del self._state[address]
+        events: list[dict[str, Any]] = []
+        for battery in batteries:
+            for event in self._update_one(battery, timestamp_ms):
+                events.append({"type": event, "address": battery["address"], "timestamp": timestamp_ms})
+
+        valid = [b for b in batteries if isinstance(b.get("socCapacityIntegerPercent"), int)]
+        integer_values = {int(b["address"]): int(b["socCapacityIntegerPercent"]) for b in valid}
+        interpolated_values = {
+            int(b["address"]): float(b["socInterpolatedPercent"])
+            for b in valid if self._valid_number(b.get("socInterpolatedPercent"))
+        }
+        leaders = sorted(a for a, value in integer_values.items() if value == max(integer_values.values())) if integer_values else []
+        trailers = sorted(a for a, value in integer_values.items() if value == min(integer_values.values())) if integer_values else []
+        current_baseline = {"addresses": sorted(integer_values), "values": integer_values, "leaders": leaders, "trailers": trailers}
+        previous = self._event_baseline
+        if previous is not None and previous["addresses"] == current_baseline["addresses"]:
+            for address, value in integer_values.items():
+                old = previous["values"].get(address)
+                if old != value:
+                    events.append({"type": "SOC_INTEGER_CHANGED", "address": address, "from": old, "to": value, "timestamp": timestamp_ms})
+            old_full = {a for a, value in previous["values"].items() if value == 100}
+            new_full = {a for a, value in integer_values.items() if value == 100}
+            entered = sorted(new_full - old_full); left = sorted(old_full - new_full)
+            if entered:
+                events.append({"type": "FIRST_TO_100" if not old_full else "LAST_TO_100", "addresses": entered, "timestamp": timestamp_ms})
+            if left:
+                events.append({"type": "FIRST_BELOW_100" if len(old_full) == len(integer_values) else "LAST_BELOW_100", "addresses": left, "timestamp": timestamp_ms})
+            if leaders != previous["leaders"]:
+                events.append({"type": "SOC_LEADER_CHANGED", "addresses": leaders, "timestamp": timestamp_ms})
+            if trailers != previous["trailers"]:
+                events.append({"type": "SOC_TRAILER_CHANGED", "addresses": trailers, "timestamp": timestamp_ms})
+        self._event_baseline = current_baseline
+        self._save()
+        integer_numbers = list(integer_values.values())
+        interpolated_numbers = list(interpolated_values.values())
+        return {
+            "integerMinimum": min(integer_numbers) if integer_numbers else None,
+            "integerMaximum": max(integer_numbers) if integer_numbers else None,
+            "integerSpread": max(integer_numbers) - min(integer_numbers) if integer_numbers else None,
+            "interpolatedMinimum": min(interpolated_numbers) if interpolated_numbers else None,
+            "interpolatedMaximum": max(interpolated_numbers) if interpolated_numbers else None,
+            "interpolatedSpread": max(interpolated_numbers) - min(interpolated_numbers) if interpolated_numbers else None,
+            "leaders": leaders, "trailers": trailers, "events": events,
+        }
+
+
 class ReadOnlyPoller:
-    def __init__(self, port: str, baud: int, timeout: float, inventory: dict[str, Any] | None = None):
+    def __init__(self, port: str, baud: int, timeout: float, inventory: dict[str, Any] | None = None, state_dir: str | None = None):
         self.port_name, self.baud, self.timeout = port, baud, timeout
         self.serial_port: Any | None = None
         self.serial_retry_at = 0.0
@@ -1037,6 +1307,7 @@ class ReadOnlyPoller:
         self.last_discovery_at: int | None = None
         self.discovery_scan: dict[str, Any] | None = None
         self.cell16_estimator = Cell16Estimator()
+        self.capacity_soc_estimator = CapacitySocEstimator(state_dir)
         if inventory:
             self.load_inventory(inventory)
 
@@ -1517,6 +1788,9 @@ class ReadOnlyPoller:
                 if not battery.get("valid"):
                     self.cell16_estimator.reset(address)
             self.cell16_estimator.prune(set(self.active_addresses), sample_timestamp)
+            capacity_soc = self.capacity_soc_estimator.update(
+                batteries, sample_timestamp, set(self.active_addresses)
+            )
             valid_batteries = [item for item in batteries if item["valid"]]
             expected_addresses = expected_addresses_before_discovery
             responding_addresses = {item["address"] for item in batteries}
@@ -1540,6 +1814,7 @@ class ReadOnlyPoller:
                 "scanType": "incremental-complete" if discovery_complete else "incremental" if discovery_scanned else "active"},
                 "expectedAddresses": sorted(expected_addresses),
                 "batteries": batteries,
+                "capacitySoc": capacity_soc,
                 "status44Health": {
                     "state": "healthy" if not status_errors else "degraded",
                     "errors": status_errors,
@@ -1909,7 +2184,7 @@ def main() -> int:
     store.ensure_json("cerbo-balancer-csv-logging.json", {"enabled": False, "filename": None})
     store.ensure_json("cerbo-balancer-rs485-inventory.json", {"version": 1, "activeAddresses": [], "pendingRemoval": [], "lastSeenAt": {}})
     store.ensure_json("cerbo-balancer-sessions.jsonl", {})
-    poller = ReadOnlyPoller(args.port, args.baud, args.timeout, store.read_json("cerbo-balancer-rs485-inventory.json"))
+    poller = ReadOnlyPoller(args.port, args.baud, args.timeout, store.read_json("cerbo-balancer-rs485-inventory.json"), args.state_dir)
     dbus_publisher = DbusPublisher(publish=args.publisher_mode == "integrated")
     csv_logger = CsvLogger(args.state_dir)
     telemetry_store = RollingTelemetryStore(args.state_dir)

@@ -83,6 +83,12 @@ const valid = {
     address: 2,
     valid: true,
     soc: 100,
+    socReportedPercent: 100,
+    socCapacityRawPercent: 99.0,
+    socCapacityIntegerPercent: 99,
+    socInterpolatedPercent: 99.42,
+    socInterpolationState: 'COULOMB_COUNTING',
+    socInterpolationAnchor: 'coulomb counting',
     vmin: 3.342,
     vminId: 0x0B02,
     vmax: 3.524,
@@ -124,7 +130,9 @@ assert.equal(live.system.mosfetTemperature.minimumId, 'Battery 2 · Sensor 02')
 assert.equal(live.system.bmsTemperature.average, '34.2')
 assert.equal(live.system.bmsTemperature.maximumId, 'Battery 2 · Sensor 01')
 assert.equal(live.system.bmsTemperature.single, null)
-assert.equal(live.batteries[0].soc, '100')
+assert.equal(live.batteries[0].soc, '99')
+assert.equal(live.batteries[0].socReported, '100')
+assert.equal(live.batteries[0].socInterpolated, '99.42')
 assert.equal(live.batteries[0].vmin, '3.342')
 assert.equal(live.batteries[0].vmax, '3.524')
 assert.equal(live.batteries[0].cellSpread, '0.182')

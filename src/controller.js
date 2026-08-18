@@ -6,13 +6,14 @@ const STATES = Object.freeze({
   SAFETY_STOP: 'SAFETY_STOP'
 })
 
-const CONTROLLER_VERSION = 6
+const CONTROLLER_VERSION = 7
 
 const FLOAT_CELL_THRESHOLD = 3.5
 const FLOAT_DEFAULT_VOLTAGE = 56.5
 const BALANCE_EXIT_CURRENT_THRESHOLD = 1.5
 
 const DEFAULT_CONFIG = Object.freeze({
+  perBatteryCapacitySocControlEnabled: true,
   balancingVoltageCeiling: 56.5,
   safetyFallbackVoltage: 55.0,
   safetyFallbackCurrent: 10.0,
@@ -103,6 +104,7 @@ function validateConfig (candidate = {}) {
   if (!(config.aggregateCurrentMinimum <= config.aggregateCurrentMaximum)) {
     errors.push('aggregate current bounds are invalid')
   }
+  if (typeof config.perBatteryCapacitySocControlEnabled !== 'boolean') errors.push('perBatteryCapacitySocControlEnabled must be boolean')
   if (!(config.feedForwardAlpha > 0 && config.feedForwardAlpha <= 1)) {
     errors.push('feedForwardAlpha must be greater than zero and at most one')
   }
@@ -172,7 +174,7 @@ function createBalancerController (options = {}) {
       migrated.automaticBalancingEnabled = persisted.enabled
     }
     migrated.csvLogging = persisted.csvLogging || migrated.csvLogging
-    const compatibleVersions = [3, 4, 5, CONTROLLER_VERSION]
+    const compatibleVersions = [3, 4, 5, 6, CONTROLLER_VERSION]
     migrated.completionLatched = compatibleVersions.includes(persisted.version) && persisted.completionLatched === true
     migrated.permissionOffSeen = compatibleVersions.includes(persisted.version) && persisted.permissionOffSeen === true
     if (compatibleVersions.includes(persisted.version) && Object.values(STATES).includes(persisted.state)) {
@@ -246,7 +248,12 @@ function createBalancerController (options = {}) {
   }
 
   function batterySoc (battery) {
-    return battery && Number.isInteger(battery.soc) ? battery.soc : masterSoc()
+    if (!battery) return null
+    if (!config.perBatteryCapacitySocControlEnabled) {
+      return Number.isInteger(battery.soc) ? battery.soc : masterSoc()
+    }
+    const soc = battery.socCapacityIntegerPercent
+    return Number.isInteger(soc) && soc >= 0 && soc <= 100 ? soc : null
   }
 
   function battery61Valid (battery) {
@@ -307,7 +314,7 @@ function createBalancerController (options = {}) {
   function virtualBmsSelected () { return Boolean(telemetry && telemetry.activeBms && telemetry.activeBms.virtualSelected === true) }
 
   function eligible (battery) {
-    return Boolean(battery61Valid(battery) && battery.spread > config.balancerSpreadThreshold &&
+    return Boolean(battery61Valid(battery) && batterySoc(battery) !== null && battery.spread > config.balancerSpreadThreshold &&
       chargeMosfetOn(battery) && !localProtection(battery))
   }
 
@@ -734,7 +741,7 @@ function createBalancerController (options = {}) {
     const timestamp = finite(message.timestamp) ? message.timestamp : now()
     if (message.type === 'load') {
       const persistedVersion = message.state && message.state.version
-      const currentVersion = [3, 4, 5, CONTROLLER_VERSION].includes(persistedVersion)
+      const currentVersion = [3, 4, 5, 6, CONTROLLER_VERSION].includes(persistedVersion)
       state = migrateState(message.state || {})
       const candidateConfig = currentVersion ? { ...(message.config || {}) } : {}
       if (persistedVersion !== CONTROLLER_VERSION && candidateConfig.ki === 0.002) candidateConfig.ki = DEFAULT_CONFIG.ki

@@ -18,6 +18,7 @@ function battery (address = 2, overrides = {}) {
     valid: true,
     system61Valid: true,
     soc: 99,
+    socCapacityIntegerPercent: 99,
     vmin: 3.400,
     vminId: 0x0100 + address,
     vmax: 3.440,
@@ -94,14 +95,19 @@ const uiNormalCommand = command(uiLimits.handle({ type: 'tick', timestamp: clock
 assert.equal(uiNormalCommand.requestedVoltage, 54.8)
 assert.equal(uiNormalCommand.requestedCurrent, 42)
 
-// A slave battery without addressed CID2 61 is selectable from its valid 0x42
-// extrema; its SOC falls back to the master's CID2 61 value.
+// A slave battery without addressed CID2 61 uses its independent CID2 42
+// integer capacity SOC and never falls back to the master SOC.
 const slaveEligible = createBalancerController({ now: () => clock })
 const slave = battery(2, { system61Valid: false, soc: undefined })
 slaveEligible.handle({ type: 'telemetry', telemetry: telemetry([slave], { system: { soc61: 85 } }), timestamp: clock })
 assert.equal(slaveEligible.getState().state, STATES.BALANCING)
 assert.equal(slaveEligible.getState().selectedAddress, 2)
-assert.equal(slaveEligible.getStatus().selectedSoc, 85)
+assert.equal(slaveEligible.getStatus().selectedSoc, 99)
+
+const slaveWithoutCapacitySoc = createBalancerController({ now: () => clock })
+const missingCapacitySoc = battery(2, { soc: undefined, socCapacityIntegerPercent: undefined })
+slaveWithoutCapacitySoc.handle({ type: 'telemetry', telemetry: telemetry([missingCapacitySoc], { system: { soc61: 85 } }), timestamp: clock })
+assert.equal(slaveWithoutCapacitySoc.getState().state, STATES.NORMAL)
 
 // Exactly 30 mV is not eligible; strictly greater is eligible.
 const exactThreshold = createBalancerController({ now: () => clock })
@@ -134,21 +140,21 @@ assert.equal(command(reselectActions).chargeEnabled, true)
 // All expected integer SOC values must equal 100 before completion latches.
 const full = createBalancerController({ now: () => clock })
 full.handle({ type: 'telemetry', telemetry: telemetry([battery(2), battery(3)]), timestamp: clock })
-sample(full, [battery(2, { soc: 100 }), battery(3, { soc: 99 })])
+sample(full, [battery(2, { soc: 100, socCapacityIntegerPercent: 100 }), battery(3, { soc: 99, socCapacityIntegerPercent: 99 })])
 assert.equal(full.getState().state, STATES.BALANCING)
-sample(full, [battery(2, { soc: 100 }), battery(3, { soc: 100 })])
+sample(full, [battery(2, { soc: 100, socCapacityIntegerPercent: 100 }), battery(3, { soc: 100, socCapacityIntegerPercent: 100 })])
 assert.equal(full.getState().state, STATES.NORMAL)
 assert.equal(full.getState().completionLatched, true)
 
-// Completion uses the master SOC fallback when slaves have no addressed SOC.
+// Master SOC changes never complete batteries whose integer capacity SOC is 99.
 const masterSocCompletion = createBalancerController({ now: () => clock })
 masterSocCompletion.handle({ type: 'telemetry', telemetry: telemetry([battery(2, { soc: undefined }), battery(3, { soc: undefined })], { system: { soc61: 99 } }), timestamp: clock })
 assert.equal(masterSocCompletion.getState().state, STATES.BALANCING)
 sample(masterSocCompletion, [battery(2, { soc: undefined }), battery(3, { soc: undefined })], { system: { soc61: 100 } })
-assert.equal(masterSocCompletion.getState().state, STATES.NORMAL)
-assert.equal(masterSocCompletion.getState().completionLatched, true)
-assert.equal(masterSocCompletion.getState().lastStopReason, 'FULL_SOC_COMPLETE')
-sample(full, [battery(2, { soc: 99 }), battery(3, { soc: 99 })], { limits: { statusFlags: { chargeEnabled: false, dischargeEnabled: true } } })
+assert.equal(masterSocCompletion.getState().state, STATES.BALANCING)
+assert.equal(masterSocCompletion.getState().completionLatched, false)
+assert.equal(masterSocCompletion.getState().lastStopReason, null)
+sample(full, [battery(2, { soc: 99, socCapacityIntegerPercent: 99 }), battery(3, { soc: 99, socCapacityIntegerPercent: 99 })], { limits: { statusFlags: { chargeEnabled: false, dischargeEnabled: true } } })
 assert.equal(full.getState().permissionOffSeen, true)
 for (let index = 0; index < 2; index++) sample(full, [battery(2), battery(3)])
 assert.equal(full.getState().completionLatched, false)
@@ -326,7 +332,7 @@ const activeFloat = createRawController({ now: () => clock })
 for (let index = 0; index < 8; index++) sample(activeFloat, [battery(2)], {
   system: { soc61: 99, voltage61: 54 + index * 0.1, maximumCellVoltage61: 3.5 }
 })
-const fullFloatActions = sample(activeFloat, [battery(2, { soc: 100 })], {
+const fullFloatActions = sample(activeFloat, [battery(2, { soc: 100, socCapacityIntegerPercent: 100 })], {
   system: { soc61: 100, voltage61: 55, maximumCellVoltage61: 3.5 },
   limits: { chargeVoltage: 55.2, chargeCurrent: 0, statusFlags: { chargeEnabled: false, dischargeEnabled: true } },
   chargeControlSettings: { maxChargeVoltage: 55, maxChargeCurrent: 80, voltageLimitEnabled: true, currentLimitEnabled: true }

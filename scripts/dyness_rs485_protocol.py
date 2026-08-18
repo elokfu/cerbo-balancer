@@ -295,9 +295,12 @@ def decode_capacity_tail_42(trailing: bytes | str) -> dict[str, Any] | None:
         return None
     return {
         "cycleCount": cycle_count,
+        "remainingCapacityRawMah": remaining_mah,
+        "totalCapacityRawMah": total_mah,
         "remainingCapacityAh": remaining_mah / 1000.0,
         "totalCapacityAh": total_mah / 1000.0,
         "capacitySoc": remaining_mah / total_mah * 100.0,
+        "capacitySource": "EXTENDED_24BIT_MAH",
         "rawCapacityTail": trailing[:13].hex().upper(),
     }
 
@@ -385,6 +388,9 @@ class BatteryTelemetry:
     remaining_capacity_ah: float | None = None
     total_capacity_ah: float | None = None
     capacity_soc: float | None = None
+    remaining_capacity_raw_mah: int | None = None
+    total_capacity_raw_mah: int | None = None
+    capacity_source: str | None = None
     raw_capacity_tail: str = ""
 
     def as_dict(self) -> dict[str, Any]:
@@ -418,6 +424,9 @@ class BatteryTelemetry:
             "remainingCapacityAh": self.remaining_capacity_ah,
             "totalCapacityAh": self.total_capacity_ah,
             "capacitySoc": self.capacity_soc,
+            "remainingCapacityRawMah": self.remaining_capacity_raw_mah,
+            "totalCapacityRawMah": self.total_capacity_raw_mah,
+            "capacitySource": self.capacity_source,
             "rawCapacityTail": self.raw_capacity_tail,
         }
 
@@ -496,6 +505,9 @@ def parse_pack_telemetry(frame: str, address: int) -> BatteryTelemetry:
         remaining_capacity_ah=capacity["remainingCapacityAh"] if capacity else None,
         total_capacity_ah=capacity["totalCapacityAh"] if capacity else None,
         capacity_soc=capacity["capacitySoc"] if capacity else None,
+        remaining_capacity_raw_mah=capacity["remainingCapacityRawMah"] if capacity else None,
+        total_capacity_raw_mah=capacity["totalCapacityRawMah"] if capacity else None,
+        capacity_source=capacity["capacitySource"] if capacity else None,
         raw_capacity_tail=capacity["rawCapacityTail"] if capacity else "",
     )
 
