@@ -873,6 +873,7 @@ class Cell16Estimator:
     MAX_ERROR_V = 0.020
     FAST_ERROR_V = 0.010
     FAST_SAMPLES = 5
+    PACK_QUANTIZATION_HALF_STEP_V = 0.0125
 
     def __init__(self) -> None:
         self._state: dict[int, dict[str, Any]] = {}
@@ -881,6 +882,16 @@ class Cell16Estimator:
     def _common_voltage(values: list[float]) -> float:
         ordered = sorted(values)
         return sum(ordered[3:-3]) / 9.0
+
+    @classmethod
+    def _measurement_error(cls, target: float, filtered: float) -> float:
+        """Return error outside the CID2 42 pack-voltage quantization interval."""
+        error = target - filtered
+        if error > cls.PACK_QUANTIZATION_HALF_STEP_V:
+            return error - cls.PACK_QUANTIZATION_HALF_STEP_V
+        if error < -cls.PACK_QUANTIZATION_HALF_STEP_V:
+            return error + cls.PACK_QUANTIZATION_HALF_STEP_V
+        return 0.0
 
     def estimate(
         self,
@@ -922,7 +933,13 @@ class Cell16Estimator:
             previous = None
         if previous is None:
             raw_offsets = deque([raw_offset], maxlen=self.OFFSET_WINDOW)
-            filtered_offset = raw_offset
+            # The 10 mV pack reading cannot locate C16 more accurately than
+            # +/-5 mV.  Start a non-corroborated estimator from the robust
+            # common-cell prior instead of turning the first quantized pack
+            # residual into a persistent low or high bias.
+            initial = min(max(common, float(minimum)), float(maximum))
+            filtered_offset = initial - common
+            raw_bias = raw_offset
             persistent_sign = 0
             persistent_samples = 0
             gain = self.NORMAL_GAIN
@@ -930,8 +947,9 @@ class Cell16Estimator:
             raw_offsets = deque(previous["rawOffsets"], maxlen=self.OFFSET_WINDOW)
             raw_offsets.append(raw_offset)
             filtered_offset = previous["filteredOffset"]
-            target = _median(list(raw_offsets))
-            error = target - filtered_offset
+            raw_bias = previous["rawBias"]
+            target = _median(list(raw_offsets)) - raw_bias
+            error = self._measurement_error(target, filtered_offset)
             sign = 1 if error > 0 else -1 if error < 0 else 0
             if abs(error) > self.FAST_ERROR_V:
                 persistent_sign = sign
@@ -941,7 +959,8 @@ class Cell16Estimator:
                 persistent_samples = 0
             gain = self.FAST_GAIN if persistent_samples >= self.FAST_SAMPLES else self.NORMAL_GAIN
             filtered_offset += gain * min(max(error, -self.MAX_ERROR_V), self.MAX_ERROR_V)
-        target_offset = _median(list(raw_offsets))
+        raw_target_offset = _median(list(raw_offsets))
+        target_offset = raw_target_offset - raw_bias
         candidate = common + filtered_offset
         constraint_source = "CID61_RANGE"
         corroborated = False
@@ -954,9 +973,19 @@ class Cell16Estimator:
             constraint_source = "CID61_MAX"
             corroborated = True
         else:
-            published = min(max(candidate, float(minimum)), float(maximum))
+            lower = float(minimum)
+            upper = float(maximum)
+            # CID61 proves only that a non-identified C16 lies somewhere in
+            # this interval.  Keep an out-of-range estimate just inside the
+            # nearest edge so it cannot falsely duplicate the named extremum.
+            margin = min(0.0005, (upper - lower) / 2.0)
+            if candidate < lower:
+                published = lower + margin
+            elif candidate > upper:
+                published = upper - margin
+            else:
+                published = candidate
         constraint_applied = corroborated or abs(published - candidate) > 1e-12
-        filtered_offset = published - common
         result = {
             "rawCalculatedCellVoltage": raw_cell16,
             "calculatedCellVoltage": published,
@@ -973,6 +1002,7 @@ class Cell16Estimator:
         }
         self._state[address] = {
             "rawOffsets": list(raw_offsets),
+            "rawBias": raw_bias,
             "filteredOffset": filtered_offset,
             "persistentSign": persistent_sign,
             "persistentSamples": persistent_samples,

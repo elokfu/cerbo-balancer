@@ -32,10 +32,20 @@ raw observation of cell 16, never as an instantaneous hard constraint.
 
 A five-sample median of the raw offset from the common voltage slowly corrects
 a filtered per-battery offset with gain 0.15 and a correction limited to 20 mV
-per update. Five consecutive same-sign errors above 10 mV temporarily select
-gain 0.30. The candidate is finally constrained to fresh CID2 `0x61` global
-cell limits; when the packed extrema ID identifies cell 16, the exact reported
-extremum is used. The constrained result drives Vmin/Vmax/spread and balancing.
+per update. The subtraction is treated as an interval-censored measurement:
+target errors within +/-12.5 mV do not move the estimator. This combines the
+pack reading's +/-5 mV quantization interval with the +/-7.5 mV uncertainty of
+summing fifteen cells reported at 1 mV resolution. This keeps telemetry
+quantization from pinning non-extremum cell 16 estimates to a CID2 `0x61` limit.
+The first valid raw offset becomes a per-battery subtraction baseline;
+only later changes relative to that baseline move the estimate. This removes a
+fixed arithmetic bias that cannot be distinguished from true cell offset at
+the available pack and cell resolutions. Five consecutive same-sign errors
+above 10 mV temporarily select gain 0.30. The candidate is finally constrained
+to fresh CID2 `0x61` global cell limits; when the packed extrema ID identifies
+cell 16, the exact reported extremum is used for that sample without feeding
+the clamp back into estimator state. The constrained result drives
+Vmin/Vmax/spread and balancing.
 Estimator state is never shared between batteries and expires after 20 seconds,
 confirmed removal, invalid telemetry, or a pack-voltage jump above 0.5 V.
 Cell 16 remains explicitly marked `calculated` / `reconstructed`. CID2 `0x44`

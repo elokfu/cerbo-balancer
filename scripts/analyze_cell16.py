@@ -114,7 +114,7 @@ def main() -> int:
             improved["relativeStep95Mv"] > 1.0 or
             improved["relativeStepMaxMv"] > 2.0 or
             result["constraintPercent"] > 2.0 or
-            abs(result["meanPackResidualMv"]) > 0.1
+            abs(result["meanPackResidualMv"]) > 12.5
         )
     return 0 if args.no_fail or not failed else 1
 

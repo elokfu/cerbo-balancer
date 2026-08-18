@@ -949,14 +949,30 @@ class Cell16EstimatorTests(unittest.TestCase):
         self.assertEqual(result["cell16PersistentErrorSamples"], 0)
         self.assertEqual(result["cell16FilterGain"], 0.15)
 
-    def test_global_range_clamps_and_synchronizes_offset(self):
+    def test_global_range_uses_common_prior_instead_of_quantized_floor(self):
         estimator = Cell16Estimator()
         limits = self.extrema(minimum=3.295, maximum=3.305)
         result = self.estimate_for_offset(estimator, -0.05, 1000, extrema=limits)
-        self.assertAlmostEqual(result["calculatedCellVoltage"], 3.295)
-        self.assertAlmostEqual(result["cell16FilteredOffsetMv"], -5.0)
-        self.assertTrue(result["cell16ConstraintApplied"])
+        self.assertAlmostEqual(result["calculatedCellVoltage"], 3.3)
+        self.assertAlmostEqual(result["cell16FilteredOffsetMv"], 0.0)
+        self.assertFalse(result["cell16ConstraintApplied"])
         self.assertEqual(result["cell16ConstraintSource"], "CID61_RANGE")
+
+    def test_pack_quantization_deadband_does_not_create_negative_bias(self):
+        estimator = Cell16Estimator()
+        result = None
+        for sample in range(8):
+            result = self.estimate_for_offset(estimator, -0.004, 1000 + sample * 1000)
+        self.assertAlmostEqual(result["calculatedCellVoltage"], 3.3)
+        self.assertAlmostEqual(result["cell16FilteredOffsetMv"], 0.0)
+
+    def test_persistent_startup_subtraction_bias_is_calibrated_out(self):
+        estimator = Cell16Estimator()
+        result = None
+        for sample in range(8):
+            result = self.estimate_for_offset(estimator, -0.008, 1000 + sample * 1000)
+        self.assertAlmostEqual(result["calculatedCellVoltage"], 3.3)
+        self.assertAlmostEqual(result["cell16FilteredOffsetMv"], 0.0)
 
     def test_cell16_extrema_ids_use_exact_cid61_value(self):
         estimator = Cell16Estimator()
@@ -969,6 +985,18 @@ class Cell16EstimatorTests(unittest.TestCase):
         result = self.estimate_for_offset(estimator, -0.02, 2000, address=3, extrema=maximum)
         self.assertEqual(result["calculatedCellVoltage"], 3.36)
         self.assertEqual(result["cell16ConstraintSource"], "CID61_MAX")
+
+    def test_exact_extremum_override_does_not_poison_filter_state(self):
+        estimator = Cell16Estimator()
+        exact = self.extrema(3.295, 3.305, min_address=2, min_index=16)
+        result = self.estimate_for_offset(estimator, -0.004, 1000, extrema=exact)
+        self.assertAlmostEqual(result["calculatedCellVoltage"], 3.295)
+        self.assertAlmostEqual(result["cell16FilteredOffsetMv"], 0.0)
+
+        other_cell = self.extrema(3.295, 3.305, min_address=2, min_index=1)
+        result = self.estimate_for_offset(estimator, -0.004, 2000, extrema=other_cell)
+        self.assertAlmostEqual(result["calculatedCellVoltage"], 3.3)
+        self.assertFalse(result["cell16ConstraintApplied"])
 
     def test_duplicate_sample_does_not_advance_filter(self):
         estimator = Cell16Estimator()
