@@ -1,0 +1,4 @@
+{
+  "batteryService": "method return time=1786948564.987705 sender=:1.58 -> destination=:1.231 serial=3883 reply_serial=2\n   variant       string \"com.victronenergy.battery/512\"",
+  "bmsInstance": "method return time=1786948565.020489 sender=:1.58 -> destination=:1.232 serial=3884 reply_serial=2\n   variant       int32 100"
+}
