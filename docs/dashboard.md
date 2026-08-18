@@ -50,11 +50,12 @@ old, measurement cards remain visible with a `STALE` banner. This is display
 only: the controller still treats the current telemetry as invalid and keeps
 controller requests non-authoritative. After ten seconds, measurements are blanked.
 
-The controller page reports the selected battery, addressed integer SOC and
-extrema, state, completion latch, aggregate request, feed-forward share, PI
-terms, and solar-limited pause counters. It controls selected-battery current
-toward 2 A through aggregate DVCC current allowance without assuming equal
-parallel current sharing.
+The controller page reports the selected battery, integer SOC (from the master
+CID2 `0x61` system summary, with a per-battery override when one exists) and
+per-battery extrema, state, completion latch, aggregate request, feed-forward
+share, PI terms, and solar-limited pause counters. It controls selected-battery
+current toward 2 A through aggregate DVCC current allowance without assuming
+equal parallel current sharing.
 
 `Automatic balancing` is the only balancing on/off control and defaults to ON
 after a fresh/reset state or Restore Defaults. ON automatically selects the

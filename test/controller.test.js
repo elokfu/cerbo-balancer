@@ -88,11 +88,14 @@ const uiNormalCommand = command(uiLimits.handle({ type: 'tick', timestamp: clock
 assert.equal(uiNormalCommand.requestedVoltage, 54.8)
 assert.equal(uiNormalCommand.requestedCurrent, 42)
 
-// CID2 42 cells cannot make an addressed-CID2 61 ineligible battery selectable.
-const sourceAuthority = createBalancerController({ now: () => clock })
-const wideCells = battery(2, { spread: 0.020, effectiveCells: [{ voltage: 2.5 }, ...Array.from({ length: 15 }, () => ({ voltage: 4.0 }))] })
-sourceAuthority.handle({ type: 'telemetry', telemetry: telemetry([wideCells]), timestamp: clock })
-assert.equal(sourceAuthority.getState().state, STATES.NORMAL)
+// A slave battery without addressed CID2 61 is selectable from its valid 0x42
+// extrema; its SOC falls back to the master's CID2 61 value.
+const slaveEligible = createBalancerController({ now: () => clock })
+const slave = battery(2, { system61Valid: false, soc: undefined })
+slaveEligible.handle({ type: 'telemetry', telemetry: telemetry([slave], { system: { soc61: 85 } }), timestamp: clock })
+assert.equal(slaveEligible.getState().state, STATES.BALANCING)
+assert.equal(slaveEligible.getState().selectedAddress, 2)
+assert.equal(slaveEligible.getStatus().selectedSoc, 85)
 
 // Exactly 30 mV is not eligible; strictly greater is eligible.
 const exactThreshold = createBalancerController({ now: () => clock })
@@ -130,6 +133,15 @@ assert.equal(full.getState().state, STATES.BALANCING)
 sample(full, [battery(2, { soc: 100 }), battery(3, { soc: 100 })])
 assert.equal(full.getState().state, STATES.NORMAL)
 assert.equal(full.getState().completionLatched, true)
+
+// Completion uses the master SOC fallback when slaves have no addressed SOC.
+const masterSocCompletion = createBalancerController({ now: () => clock })
+masterSocCompletion.handle({ type: 'telemetry', telemetry: telemetry([battery(2, { soc: undefined }), battery(3, { soc: undefined })], { system: { soc61: 99 } }), timestamp: clock })
+assert.equal(masterSocCompletion.getState().state, STATES.BALANCING)
+sample(masterSocCompletion, [battery(2, { soc: undefined }), battery(3, { soc: undefined })], { system: { soc61: 100 } })
+assert.equal(masterSocCompletion.getState().state, STATES.NORMAL)
+assert.equal(masterSocCompletion.getState().completionLatched, true)
+assert.equal(masterSocCompletion.getState().lastStopReason, 'FULL_SOC_COMPLETE')
 sample(full, [battery(2, { soc: 99 }), battery(3, { soc: 99 })], { limits: { statusFlags: { chargeEnabled: false, dischargeEnabled: true } } })
 assert.equal(full.getState().permissionOffSeen, true)
 for (let index = 0; index < 2; index++) sample(full, [battery(2), battery(3)])

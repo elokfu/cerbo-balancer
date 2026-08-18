@@ -45,6 +45,8 @@ DETAILED_RETENTION_MS = 24 * 60 * 60 * 1000
 SUMMARY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 SUMMARY_INTERVAL_MS = 60 * 1000
 COMMAND_FRESHNESS_MS = 20 * 1000
+# TEMPORARY TEST OVERRIDE: permit bounded discharge while RS485 telemetry is invalid.
+COMMUNICATION_FAULT_DISCHARGE_FALLBACK_A = 100.0
 EXPECTED_ADDRESSES = tuple(range(2, 17))
 NORMAL_DISCOVERY_INTERVAL = 60.0
 RECOVERY_DISCOVERY_INTERVAL = 10.0
@@ -706,7 +708,8 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
     valid = bool(snapshot.get("valid"))
     bms_cvl = float(limits.get("chargeVoltage", 55.0)) if valid else None
     bms_ccl = max(0.0, float(limits.get("chargeCurrent", 0.0))) if valid else 0.0
-    bms_dcl = abs(float(limits.get("dischargeCurrentSigned", 0.0))) if valid else 0.0
+    bms_dcl = (abs(float(limits.get("dischargeCurrentSigned", 0.0)))
+               if valid else COMMUNICATION_FAULT_DISCHARGE_FALLBACK_A)
     ui_settings = snapshot.get("chargeControlSettings") or {}
     ui_voltage = ui_settings.get("maxChargeVoltage")
     ui_current = ui_settings.get("maxChargeCurrent")
@@ -764,7 +767,9 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
         (applied_charge_enabled and effective_current > 0 and
          status_flags.get("chargeEnabled") is True)
     )
-    effective_discharge_enabled = bool(valid and status_flags.get("dischargeEnabled") is True and bms_dcl > 0)
+    effective_discharge_enabled = bool(
+        bms_dcl > 0 and status_flags.get("dischargeEnabled") is not False
+    )
     if not valid:
         reason = "RS485_TELEMETRY_INVALID"
     elif not fresh_command:
@@ -1153,22 +1158,11 @@ class ReadOnlyPoller:
                 time.monotonic() >= self.next_status_at
             ) else set()
             status_errors: list[str] = []
+            # CID2=0x61 is a master/system-summary response on this Dyness
+            # installation.  Slave addresses still provide their own CID2=42
+            # analog telemetry and CID2=44 status, but do not answer CID2=61.
+            # Do not turn those expected no-replies into communication faults.
             for address in addresses:
-                if address not in system61_by_address:
-                    system61_frame = self.query(port, address, 0x61)
-                    if system61_frame:
-                        try:
-                            per_battery_system = parse_system_61(system61_frame, address).as_dict()
-                            system61_by_address[address] = per_battery_system
-                            raw_frames.append({
-                                "cid2": "61",
-                                "address": address,
-                                "frame": system61_frame.decode("ascii"),
-                            })
-                        except (UnicodeDecodeError, ValueError) as error:
-                            errors.append(f"CID2=61 address {address:02X}: {error}")
-                    else:
-                        errors.append(f"CID2=61 address {address:02X} timeout")
                 frame = self.query(port, address, 0x42)
                 if not frame:
                     errors.append(f"CID2=42 address {address:02X} timeout")
@@ -1254,6 +1248,77 @@ class ReadOnlyPoller:
             discovery_scanned, discovery_complete = self._advance_discovery(
                 port, {item["address"]: item for item in batteries}
             )
+            # Per-battery extrema are derived from the complete effective
+            # CID2=0x42 cell vector.  When a pack reports 15 cells, use the
+            # average of all available addressed CID2=0x42 battery voltages
+            # for the reconstructed cell 16, as the voltage reference for the
+            # parallel bank is shared by the available module readings.
+            battery_voltages = [
+                float(item["voltage"])
+                for item in batteries
+                if isinstance(item.get("voltage"), (int, float)) and
+                40.0 <= float(item["voltage"]) <= 70.0
+            ]
+            average_battery_voltage = (
+                sum(battery_voltages) / len(battery_voltages)
+                if battery_voltages else None
+            )
+            for battery in batteries:
+                effective_cells = battery.get("effectiveCells") or []
+                if (
+                    average_battery_voltage is not None and
+                    battery.get("calculatedCellIndex") == 16 and
+                    len(effective_cells) == 16
+                ):
+                    reported_sum = sum(
+                        float(cell.get("voltage"))
+                        for cell in effective_cells[:15]
+                    )
+                    calculated = average_battery_voltage - reported_sum
+                    effective_cells[15]["voltage"] = calculated
+                    battery["calculatedCellVoltage"] = calculated
+                    battery["reconstructedCellSum"] = sum(
+                        float(cell.get("voltage")) for cell in effective_cells
+                    )
+                    battery["reconstructedVoltageDeltaMv"] = (
+                        battery["reconstructedCellSum"] - average_battery_voltage
+                    ) * 1000.0
+                    errors_for_average = [
+                        error for error in battery.get("validationErrors") or []
+                        if not error.startswith("cell voltage outside") and
+                        not error.startswith("cell sum differs")
+                    ]
+                    if not 2.5 <= calculated <= 4.5:
+                        errors_for_average.append(
+                            "calculated cell 16 outside 2.5..4.5 V validation range"
+                        )
+                    if abs(battery["reconstructedVoltageDeltaMv"]) > 100.0:
+                        errors_for_average.append(
+                            "cell sum differs from average battery voltage by "
+                            f"{battery['reconstructedVoltageDeltaMv']:.1f} mV"
+                        )
+                    battery["validationErrors"] = errors_for_average
+                    battery["valid"] = not errors_for_average
+                values = [
+                    float(cell.get("voltage"))
+                    for cell in effective_cells
+                    if isinstance(cell.get("voltage"), (int, float))
+                ]
+                if battery.get("valid") and len(values) == 16:
+                    minimum = min(values)
+                    maximum = max(values)
+                    min_index = values.index(minimum) + 1
+                    max_index = values.index(maximum) + 1
+                    battery.update({
+                        "vmin": minimum,
+                        "vmax": maximum,
+                        "spread": maximum - minimum,
+                        "vminAddress": battery.get("address"),
+                        "vminIndex": min_index,
+                        "vmaxAddress": battery.get("address"),
+                        "vmaxIndex": max_index,
+                        "controllerExtremaSource": "CID2_42_CELL_ARRAY",
+                    })
             valid_batteries = [item for item in batteries if item["valid"]]
             expected_addresses = expected_addresses_before_discovery
             responding_addresses = {item["address"] for item in batteries}
@@ -1261,8 +1326,7 @@ class ReadOnlyPoller:
             currents = [item["current"] for item in valid_batteries]
             temps = [temperature for item in valid_batteries for temperature in item["temperatures"]]
             all_expected_valid = (
-                complete_battery_set and len(valid_batteries) == len(batteries) and
-                all(item.get("system61Valid") is True for item in batteries)
+                complete_battery_set and len(valid_batteries) == len(batteries)
             )
             extrema = system_cell_extrema(system_values)
             if not extrema["valid"]:
@@ -1288,7 +1352,8 @@ class ReadOnlyPoller:
                 "minimumTemperature": min(temps) if temps else None, "maximumTemperature": max(temps) if temps else None,
                 "averageTemperature": sum(temps) / len(temps) if temps else None},
                 "cellTelemetryValid": bool(all_expected_valid and extrema["valid"]),
-                "addressedSystemTelemetryValid": bool(all_expected_valid),
+                "addressedSystemTelemetryValid": bool(system is not None and extrema["valid"]),
+                "addressedSystemTelemetrySource": "CID2_61_MASTER_ADDRESS_02",
                 "decoderHealth": "healthy" if not errors else "degraded", "rawFrames": raw_frames,
             }
             self.serial_health.update({
@@ -1390,8 +1455,10 @@ class DbusPublisher:
             self.objects = {}
             defaults = {
                 "/DeviceInstance": dbus.UInt32(100),
+                "/Connected": dbus.Boolean(True),
                 "/ProductId": dbus.UInt32(0xC065),
                 "/ProductName": dbus.String("Dyness RS485 virtual BMS"),
+                "/Mgmt/Connection": dbus.String("Dyness RS485"),
                 "/FirmwareVersion": dbus.String("0.1.0"),
                 "/Soc": dbus.Double(0.0),
                 "/Dc/0/Voltage": dbus.Double(53.0),
@@ -1409,7 +1476,6 @@ class DbusPublisher:
                 "/Bms/StrongCharge": dbus.Boolean(False),
                 "/Bms/FullCharge": dbus.Boolean(False),
                 "/Bms/UnknownStatusBits": dbus.UInt32(0),
-                "/Connected": dbus.Boolean(False),
                 "/State": dbus.String("RS485 unavailable"),
                 "/Control/RequestedChargeVoltage": dbus.Double(0.0),
                 "/Control/RequestedChargeCurrent": dbus.Double(0.0),
@@ -1485,7 +1551,7 @@ class DbusPublisher:
         voltage = system.get("voltage61") if snapshot.get("valid") else 53.0
         current = aggregate.get("summedBatteryCurrent") if snapshot.get("valid") else 0.0
         ccl = control.get("effectiveChargeCurrent")
-        dcl = control.get("effectiveDischargeCurrent") if snapshot.get("valid") else 0.0
+        dcl = control.get("effectiveDischargeCurrent")
         cvl = control.get("effectiveChargeVoltage")
         requested_voltage = control.get("requestedVoltage")
         requested_current = control.get("requestedCurrent")
@@ -1503,11 +1569,11 @@ class DbusPublisher:
             "/Info/MaxChargeCurrent": dbus.Double(float(ccl or 0.0)),
             "/Info/MaxDischargeCurrent": dbus.Double(float(dcl or 0.0)),
             "/Bms/AllowToCharge": dbus.Boolean(bool(control.get("effectiveChargeEnabled"))),
-            "/Bms/AllowToDischarge": dbus.Boolean(bool(snapshot.get("valid") and dcl is not None and dcl > 0 and status_flags.get("dischargeEnabled") is True and not control.get("dischargeBlockedByStatus"))),
+            "/Bms/AllowToDischarge": dbus.Boolean(bool(control.get("effectiveDischargeEnabled"))),
             "/Bms/StatusRaw": dbus.UInt32(int(limits.get("statusRaw") or 0)),
             "/Bms/Status": dbus.String("permissions"),
             "/Bms/ChargeEnabled": dbus.Boolean(bool(control.get("effectiveChargeEnabled"))),
-            "/Bms/DischargeEnabled": dbus.Boolean(bool(status_flags.get("dischargeEnabled"))),
+            "/Bms/DischargeEnabled": dbus.Boolean(bool(control.get("effectiveDischargeEnabled"))),
             "/Bms/StrongCharge": dbus.Boolean(bool(status_flags.get("strongCharge"))),
             "/Bms/FullCharge": dbus.Boolean(bool(status_flags.get("fullCharge"))),
             "/Bms/UnknownStatusBits": dbus.UInt32(int(status_flags.get("unknownReservedBits") or 0)),
@@ -1532,9 +1598,18 @@ class DbusPublisher:
             "/Control/AuthorityState": dbus.String(str(control.get("authorityState") or "UNKNOWN")),
             "/Control/ControllerRequestApplied": dbus.Boolean(bool(control.get("controllerRequestApplied"))),
         }
+        changed = dbus.Dictionary({}, signature="sa{sv}")
         for path, value in values.items():
             if path in self.objects:
-                self.objects[path].value = value
+                item = self.objects[path]
+                if item.value != value:
+                    item.value = value
+                    changed[path] = dbus.Dictionary(
+                        {"Value": value, "Text": dbus.String(str(value))},
+                        signature="sv",
+                    )
+        if changed:
+            self.root.ItemsChanged(changed)
 
 
 def main() -> int:

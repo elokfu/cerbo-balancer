@@ -4,8 +4,9 @@
 It discovers Dyness/Pylon addresses 2–16 and sends only read requests:
 
 - CID2 `0x42`: per-battery cells, temperatures, current, and voltage.
-- CID2 `0x61`: complete system summary, including system current, SOC, cell
-  summary, and cell/MOSFET/BMS temperatures.
+- CID2 `0x61`: master system summary, including system current, SOC, cell
+  summary, and cell/MOSFET/BMS temperatures. Only the master battery at
+  address 2 answers this request; slave addresses are not polled for it.
 - CID2 `0x63`: charge/discharge voltage, CCL, DCL, and permission/state bits.
 - CID2 `0x44`: per-battery alarms plus complete Status1–Status5 decoding.
 
@@ -22,14 +23,16 @@ Status5 identify cell voltage-check faults for cells 1–8 and 9–16. These
 values are diagnostic-only and do not alter telemetry validity, DVCC limits,
 or controller behavior.
 
-CID2 `0x42` remains the only source for each battery's logical cell vector.
-When it reports 15 cells, cell 16 is reconstructed only as the addressed
-battery's CID2 `0x42` voltage minus the first 15 CID2 `0x42` cells. CID2
-`0x61` is the authoritative source for pack-wide Vmin, Vmax, spread, and their
-packed battery/cell locations (`0x1102` means Battery 2, Cell 11). CID2
-`0x44` is status-only and is never used as a cell-voltage source. An invalid
-CID2 `0x61` extrema summary is not replaced with a locally calculated pack
-aggregate, and blocks elevated balancing.
+CID2 `0x42` remains the source for each battery's logical cell vector and
+per-battery extrema. When it reports 15 cells, cell 16 is reconstructed using
+the average addressed CID2 `0x42` voltage across the parallel pack. CID2 `0x61`
+is a master/system-summary response on this installation: only the master
+battery at address 2 answers it and supplies the system SOC, voltage, Vmin,
+Vmax, spread, and packed locations. Slave addresses are not polled for CID2
+`0x61`; their expected no-reply is not treated as a communication fault.
+Per-battery Vmin, Vmax, and spread are derived from each battery's own CID2
+`0x42` cell array. CID2 `0x44` is status-only and is never used as a
+cell-voltage source.
 
 The CID2 `0x63` status byte is decoded and retained as `limits.statusFlags`.
 The correct Pylon/Dyness meanings are: bit 7 charge enabled, bit 6 discharge

@@ -211,9 +211,17 @@ function createBalancerController (options = {}) {
     return Boolean(status && status.effectiveDischarging === true)
   }
 
+  function masterSoc () {
+    const soc = telemetry && telemetry.system && telemetry.system.soc61
+    return Number.isInteger(soc) && soc >= 0 && soc <= 100 ? soc : null
+  }
+
+  function batterySoc (battery) {
+    return battery && Number.isInteger(battery.soc) ? battery.soc : masterSoc()
+  }
+
   function battery61Valid (battery) {
-    return Boolean(battery && battery.valid === true && battery.system61Valid === true &&
-      Number.isInteger(battery.soc) && battery.soc >= 0 && battery.soc <= 100 &&
+    return Boolean(battery && battery.valid === true &&
       finite(battery.vmin) && finite(battery.vmax) && finite(battery.spread) &&
       battery.vmax >= battery.vmin && finite(battery.current))
   }
@@ -274,7 +282,7 @@ function createBalancerController (options = {}) {
     const expected = expectedAddresses()
     return expected.length > 0 && expected.every(address => {
       const battery = batteryByAddress(address)
-      return battery61Valid(battery) && battery.soc === 100
+      return battery61Valid(battery) && batterySoc(battery) === 100
     })
   }
 
@@ -471,7 +479,7 @@ function createBalancerController (options = {}) {
         if (!selected) transition(STATES.NORMAL, timestamp, 'no other eligible battery')
         command = selected ? balancingCommand(timestamp, selected) : normalCommand('NO_ELIGIBLE_BATTERY')
       } else if (state.state === STATES.BALANCING && selected && effectiveDischarging(selected) &&
-        selected.soc < 100 && selected.spread < config.balancerSpreadThreshold) {
+        batterySoc(selected) < 100 && selected.spread < config.balancerSpreadThreshold) {
         state.lastStopReason = 'BALANCE_DISCHARGE_COMPLETE'
         record(timestamp, 'BALANCE_DISCHARGE_COMPLETE', 'effective discharge with SOC below 100 and spread below threshold', { selectedAddress: selected.address })
         resetControl()
@@ -551,7 +559,7 @@ function createBalancerController (options = {}) {
       chargeControlSettings: { ...chargeControlSettings() },
       csvLogging: { ...state.csvLogging },
       selectedCurrent: selected && selected.current,
-      selectedSoc: selected && selected.soc,
+      selectedSoc: selected ? batterySoc(selected) : masterSoc(),
       selectedVmin: selected && selected.vmin,
       selectedVmax: selected && selected.vmax,
       selectedSpread: selected && selected.spread,

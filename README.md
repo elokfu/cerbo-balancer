@@ -6,24 +6,29 @@ CID2 `0x42`, `0x44`, `0x61`, and `0x63` read requests.
 
 CID2 `0x42` is authoritative for each battery's cells, voltage, signed
 current, and temperatures. When 15 cells are returned, cell 16 is calculated
-from that same battery's CID2 `0x42` voltage. Addressed CID2 `0x61` supplies
-each battery's integer SOC, Vmin, Vmax, spread, and packed locations. These
-values alone drive selection and completion; the CID2 `0x42` cell array is
-diagnostic-only for those decisions.
+from that same battery's CID2 `0x42` voltage. CID2 `0x61` is a
+master/system-summary response on this Dyness installation: only the master
+battery at address 2 answers it, and it supplies the system SOC, voltage,
+Vmin, Vmax, spread, and packed locations. Slave addresses do not answer CID2
+`0x61` and are never polled for it, so their expected no-reply is not treated
+as a communication fault. Per-battery Vmin, Vmax, and spread are derived from
+each battery's own CID2 `0x42` cell array; per-battery SOC falls back to the
+master's CID2 `0x61` value when a battery has no addressed SOC.
 
 ## Current commissioning boundary
 
 The flow calculates a feed-forward plus slow-PI aggregate-current request that
-targets 2 A in the first battery whose addressed CID2 `0x61` spread is strictly
-above 30 mV. Cerbo's manually selected battery monitor is the authority gate:
+targets 2 A in the first battery whose per-battery spread is strictly above
+30 mV. Cerbo's manually selected battery monitor is the authority gate:
 instance `100` applies fresh controller requests, while the CAN BMS keeps them
 as shadow diagnostics. Unknown selection also remains non-authoritative.
 
 The selected battery remains locked until all expected batteries report integer
-SOC 100, a qualifying effective-discharge completion occurs, or its local
-charge path/protection excludes it. Cloud-limited charging freezes control
-without changing state. There are no forced discharge cycles or software cell
-voltage stops. Master CID2 `0x63` permission and limits remain authoritative.
+SOC 100 (using the master SOC fallback), a qualifying effective-discharge
+completion occurs, or its local charge path/protection excludes it.
+Cloud-limited charging freezes control without changing state. There are no
+forced discharge cycles or software cell voltage stops. Master CID2 `0x63`
+permission and limits remain authoritative.
 
 Automatic balancing defaults to **ON** after a fresh state, state reset, or
 Restore Defaults. It automatically selects the first eligible battery; there
