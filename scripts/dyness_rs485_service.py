@@ -830,6 +830,70 @@ def effective_control(snapshot: dict[str, Any], command: dict[str, Any] | None) 
     }
 
 
+def _median(values: list[float]) -> float:
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2.0
+
+
+class Cell16Estimator:
+    """Per-battery cell-16 reconstruction with pack-voltage quantization.
+
+    Dyness reports cells 1-15 at 1 mV resolution but omits cell 16.  Each
+    battery's own pack voltage is a quantized constraint (about 10 mV
+    resolution), so the raw subtraction can jump by +-5 mV.  A per-battery
+    predictor advances cell 16 by the median movement of the reported cells
+    and clamps it into the pack-voltage quantization window.  The first
+    sample is seeded with the median reported cell voltage.  Only the clamped
+    estimate is published; the raw subtraction result is never used directly.
+    """
+
+    RESTART_VOLTAGE_JUMP_V = 0.5
+
+    def __init__(self) -> None:
+        self._state: dict[int, dict[str, Any]] = {}
+
+    def estimate(self, battery: dict[str, Any]) -> float | None:
+        address = battery.get("address")
+        cells = battery.get("reportedCells") or []
+        voltage = battery.get("voltage")
+        values = [float(cell) for cell in cells if isinstance(cell, (int, float))]
+        if (
+            address is None or len(values) != 15 or
+            not isinstance(voltage, (int, float)) or
+            not 40.0 <= float(voltage) <= 70.0
+        ):
+            self.reset(address)
+            return None
+        pack_voltage = float(voltage)
+        reported_sum = sum(values)
+        lower = pack_voltage - 0.005 - reported_sum
+        upper = pack_voltage + 0.005 - reported_sum
+        previous = self._state.get(address)
+        if previous is not None and abs(pack_voltage - previous["voltage"]) > self.RESTART_VOLTAGE_JUMP_V:
+            self.reset(address)
+            previous = None
+        if previous is not None and len(previous["cells"]) == 15:
+            delta = _median([cur - prev for cur, prev in zip(values, previous["cells"])])
+            predicted = previous["cell16"] + delta
+        else:
+            predicted = _median(values)
+        cell16 = min(max(predicted, lower), upper)
+        self._state[address] = {"cells": values, "voltage": pack_voltage, "cell16": cell16}
+        return cell16
+
+    def reset(self, address: int | None) -> None:
+        if address is not None:
+            self._state.pop(address, None)
+
+    def prune(self, present_addresses: set[int]) -> None:
+        for address in list(self._state):
+            if address not in present_addresses:
+                del self._state[address]
+
+
 class ReadOnlyPoller:
     def __init__(self, port: str, baud: int, timeout: float, inventory: dict[str, Any] | None = None):
         self.port_name, self.baud, self.timeout = port, baud, timeout
@@ -844,6 +908,7 @@ class ReadOnlyPoller:
         self.status44_cache: dict[int, dict[str, Any]] = {}
         self.last_discovery_at: int | None = None
         self.discovery_scan: dict[str, Any] | None = None
+        self.cell16_estimator = Cell16Estimator()
         if inventory:
             self.load_inventory(inventory)
 
@@ -1248,57 +1313,50 @@ class ReadOnlyPoller:
             discovery_scanned, discovery_complete = self._advance_discovery(
                 port, {item["address"]: item for item in batteries}
             )
-            # Per-battery extrema are derived from the complete effective
-            # CID2=0x42 cell vector.  When a pack reports 15 cells, use the
-            # average of all available addressed CID2=0x42 battery voltages
-            # for the reconstructed cell 16, as the voltage reference for the
-            # parallel bank is shared by the available module readings.
-            battery_voltages = [
-                float(item["voltage"])
-                for item in batteries
-                if isinstance(item.get("voltage"), (int, float)) and
-                40.0 <= float(item["voltage"]) <= 70.0
-            ]
-            average_battery_voltage = (
-                sum(battery_voltages) / len(battery_voltages)
-                if battery_voltages else None
-            )
+            # Per-battery cell-16 reconstruction.  Each battery's own pack
+            # voltage is a quantized constraint (about 10 mV resolution), so
+            # the raw subtraction can jump by +-5 mV.  A per-battery predictor
+            # advances cell 16 by the median movement of the reported cells and
+            # clamps it into the pack-voltage quantization window.  Only the
+            # clamped estimate drives Vmin/Vmax/spread and balancing detection;
+            # the raw subtraction result is never used for that.
             for battery in batteries:
                 effective_cells = battery.get("effectiveCells") or []
-                if (
-                    average_battery_voltage is not None and
-                    battery.get("calculatedCellIndex") == 16 and
-                    len(effective_cells) == 16
-                ):
-                    reported_sum = sum(
-                        float(cell.get("voltage"))
-                        for cell in effective_cells[:15]
-                    )
-                    calculated = average_battery_voltage - reported_sum
-                    effective_cells[15]["voltage"] = calculated
-                    battery["calculatedCellVoltage"] = calculated
+                address = battery.get("address")
+                if battery.get("calculatedCellIndex") == 16 and len(effective_cells) == 16:
+                    estimated = self.cell16_estimator.estimate(battery)
+                    if estimated is None:
+                        battery["valid"] = False
+                        battery["validationErrors"] = (battery.get("validationErrors") or []) + [
+                            "cell 16 reconstruction unavailable"
+                        ]
+                        self.cell16_estimator.reset(address)
+                        continue
+                    effective_cells[15]["voltage"] = estimated
+                    battery["calculatedCellVoltage"] = estimated
                     battery["reconstructedCellSum"] = sum(
                         float(cell.get("voltage")) for cell in effective_cells
                     )
                     battery["reconstructedVoltageDeltaMv"] = (
-                        battery["reconstructedCellSum"] - average_battery_voltage
+                        battery["reconstructedCellSum"] - float(battery["voltage"])
                     ) * 1000.0
-                    errors_for_average = [
+                    battery["cell16Source"] = "reconstructed"
+                    errors_for_reconstruction = [
                         error for error in battery.get("validationErrors") or []
                         if not error.startswith("cell voltage outside") and
                         not error.startswith("cell sum differs")
                     ]
-                    if not 2.5 <= calculated <= 4.5:
-                        errors_for_average.append(
+                    if not 2.5 <= estimated <= 4.5:
+                        errors_for_reconstruction.append(
                             "calculated cell 16 outside 2.5..4.5 V validation range"
                         )
                     if abs(battery["reconstructedVoltageDeltaMv"]) > 100.0:
-                        errors_for_average.append(
-                            "cell sum differs from average battery voltage by "
+                        errors_for_reconstruction.append(
+                            "cell sum differs from battery voltage by "
                             f"{battery['reconstructedVoltageDeltaMv']:.1f} mV"
                         )
-                    battery["validationErrors"] = errors_for_average
-                    battery["valid"] = not errors_for_average
+                    battery["validationErrors"] = errors_for_reconstruction
+                    battery["valid"] = not errors_for_reconstruction
                 values = [
                     float(cell.get("voltage"))
                     for cell in effective_cells
@@ -1319,6 +1377,9 @@ class ReadOnlyPoller:
                         "vmaxIndex": max_index,
                         "controllerExtremaSource": "CID2_42_CELL_ARRAY",
                     })
+                if not battery.get("valid"):
+                    self.cell16_estimator.reset(address)
+            self.cell16_estimator.prune({item["address"] for item in batteries})
             valid_batteries = [item for item in batteries if item["valid"]]
             expected_addresses = expected_addresses_before_discovery
             responding_addresses = {item["address"] for item in batteries}

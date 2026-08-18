@@ -5,15 +5,20 @@ controller for Cerbo GX. The RS485 adapter is polled at 115200 8N1 using only
 CID2 `0x42`, `0x44`, `0x61`, and `0x63` read requests.
 
 CID2 `0x42` is authoritative for each battery's cells, voltage, signed
-current, and temperatures. When 15 cells are returned, cell 16 is calculated
-from that same battery's CID2 `0x42` voltage. CID2 `0x61` is a
-master/system-summary response on this Dyness installation: only the master
-battery at address 2 answers it, and it supplies the system SOC, voltage,
-Vmin, Vmax, spread, and packed locations. Slave addresses do not answer CID2
-`0x61` and are never polled for it, so their expected no-reply is not treated
-as a communication fault. Per-battery Vmin, Vmax, and spread are derived from
-each battery's own CID2 `0x42` cell array; per-battery SOC falls back to the
-master's CID2 `0x61` value when a battery has no addressed SOC.
+current, and temperatures. When 15 cells are returned, cell 16 is
+reconstructed per battery from that battery's own pack voltage as a quantized
+constraint (about 10 mV resolution): a per-battery predictor advances cell 16
+by the median movement of the reported cells and clamps it into the ±5 mV
+pack-voltage window, seeded with the median reported cell on the first sample
+and reset after communication loss, invalid telemetry, or a pack-voltage jump
+larger than 0.5 V. CID2 `0x61` is a master/system-summary response on this
+Dyness installation: only the master battery at address 2 answers it, and it
+supplies the system SOC, voltage, Vmin, Vmax, spread, and packed locations.
+Slave addresses do not answer CID2 `0x61` and are never polled for it, so
+their expected no-reply is not treated as a communication fault. Per-battery
+Vmin, Vmax, and spread are derived from each battery's own CID2 `0x42` cell
+array (using the filtered cell-16 estimate); per-battery SOC falls back to
+the master's CID2 `0x61` value when a battery has no addressed SOC.
 
 ## Current commissioning boundary
 

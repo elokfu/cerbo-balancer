@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import dyness_rs485_service as service  # noqa: E402
 from dyness_rs485_service import (  # noqa: E402
+    Cell16Estimator,
     CsvLogger,
     JsonlStore,
     ReadOnlyPoller,
@@ -884,6 +885,108 @@ class DynessServiceTests(unittest.TestCase):
                           if not line.startswith("#")]
             self.assertEqual(data_lines[0], ",".join(legacy_columns))
             self.assertEqual(len(next(csv.reader([data_lines[1]]))), len(legacy_columns))
+
+
+class Cell16EstimatorTests(unittest.TestCase):
+    def battery(self, address=2, cells=None, voltage=52.8):
+        return {
+            "address": address,
+            "reportedCells": cells if cells is not None else [3.30] * 15,
+            "voltage": voltage,
+        }
+
+    def test_seed_is_median_of_reported_cells(self):
+        estimator = Cell16Estimator()
+        # Cells sum to 49.52 V; pack 52.8 V gives a 3.28 V raw cell 16 and a
+        # 3.275..3.285 V window.  The median seed 3.30 V is clamped to 3.285 V.
+        cells = [3.30] * 14 + [3.32]
+        self.assertAlmostEqual(estimator.estimate(self.battery(cells=cells)), 3.285, places=6)
+        self.assertAlmostEqual(estimator.estimate(self.battery(cells=cells)), 3.285, places=6)
+
+    def test_predicts_from_previous_estimate_and_median_delta(self):
+        estimator = Cell16Estimator()
+        # First sample: 15 x 3.30 V at pack 52.78 V -> seed 3.30 clamped to 3.285 V.
+        first = estimator.estimate(self.battery(cells=[3.30] * 15, voltage=52.78))
+        self.assertAlmostEqual(first, 3.285, places=6)
+        # Second sample: cells +0.01 V at pack 52.945 V.  Median delta is +0.01 V,
+        # so the prediction is 3.285 + 0.01 = 3.295 V, inside the 3.29..3.30 V
+        # window.  A reseed would give 3.30 V (the new median), so 3.295 V proves
+        # the predictor path was used.
+        second = estimator.estimate(self.battery(cells=[3.31] * 15, voltage=52.945))
+        self.assertAlmostEqual(second, 3.295, places=6)
+
+    def test_state_is_per_battery(self):
+        estimator = Cell16Estimator()
+        estimator.estimate(self.battery(address=2, cells=[3.30] * 15, voltage=52.78))
+        estimator.estimate(self.battery(address=3, cells=[3.40] * 15, voltage=54.30))
+        # A fresh battery 4 must seed independently and not inherit battery 2's state.
+        seeded = estimator.estimate(self.battery(address=4, cells=[3.30] * 15, voltage=52.78))
+        self.assertAlmostEqual(seeded, 3.285, places=6)
+
+    def test_resets_after_pack_voltage_jump(self):
+        estimator = Cell16Estimator()
+        estimator.estimate(self.battery(cells=[3.30] * 15, voltage=52.78))
+        battery_after_jump = self.battery(cells=[3.35] * 15, voltage=53.30)
+        # A > 0.5 V pack jump is treated as a battery restart: the estimate is
+        # re-seeded from the current cells (identical to a fresh estimator)
+        # instead of being advanced from the stale previous estimate.
+        after_jump = estimator.estimate(battery_after_jump)
+        fresh = Cell16Estimator().estimate(battery_after_jump)
+        self.assertEqual(after_jump, fresh)
+
+    def test_reset_on_invalid_input(self):
+        estimator = Cell16Estimator()
+        estimator.estimate(self.battery(cells=[3.30] * 15, voltage=52.78))
+        # Sixteen reported cells need no reconstruction and must drop the state.
+        self.assertIsNone(estimator.estimate(self.battery(cells=[3.30] * 16, voltage=52.8)))
+        # A subsequent 15-cell sample re-seeds instead of continuing from the
+        # dropped previous estimate (the re-seeded value differs: 3.30, not 3.285).
+        reseeded = estimator.estimate(self.battery(cells=[3.30] * 15, voltage=52.8))
+        self.assertAlmostEqual(reseeded, 3.30, places=6)
+
+    def test_prune_drops_missing_addresses(self):
+        estimator = Cell16Estimator()
+        estimator.estimate(self.battery(cells=[3.30] * 15, voltage=52.78))
+        estimator.prune({3})
+        # After prune, the address-2 state is gone, so the next estimate re-seeds.
+        estimator.estimate(self.battery(cells=[3.31] * 15, voltage=52.945))
+        reseeded = estimator.estimate(self.battery(cells=[3.31] * 15, voltage=52.945))
+        # 15 x 3.31 = 49.65; pack 52.945 -> window 3.29..3.30; seed 3.31 clamps to 3.30.
+        self.assertAlmostEqual(reseeded, 3.30, places=6)
+
+    def test_reconstructed_cell16_drives_extrema(self):
+        poller = ReadOnlyPoller("C:\\fake-dyness-rs485", 115200, 0.01)
+        poller.active_addresses = [2]
+        poller.next_discovery_at = time.monotonic() + 60
+        poller.next_status_at = time.monotonic() + 60
+
+        cells = "".join(f"{3300:04X}" for _ in range(15))
+        frames = {
+            0x61: response(2, 0x61, system_summary_info(
+                voltage_mv=52800,
+                maximum_cell_mv=3329,
+                maximum_cell_id=0x0702,
+                minimum_cell_mv=3317,
+                minimum_cell_id=0x0B02,
+            )),
+            0x63: response(2, 0x63, f"{56500:04X}{48000:04X}{560:04X}{0xF83C:04X}C0"),
+            0x42: response(2, 0x42, f"00020F{cells}00{0:04X}{52800:04X}"),
+        }
+        poller._open_serial = lambda: object()
+        poller._owner_conflict = lambda: False
+        poller.query = lambda _port, _address, cid2, timeout=None: frames[cid2]
+
+        snapshot = poller.poll()
+
+        self.assertTrue(snapshot["valid"])
+        battery = snapshot["batteries"][0]
+        self.assertEqual(battery["cell16Source"], "reconstructed")
+        # 15 x 3.30 V cells, pack 52.8 V: window 3.295..3.305 V, seed 3.30 -> 3.30 V.
+        self.assertAlmostEqual(battery["calculatedCellVoltage"], 3.30, places=6)
+        self.assertEqual(battery["vmin"], 3.30)
+        self.assertEqual(battery["vmax"], 3.30)
+        self.assertEqual(battery["spread"], 0.0)
+        self.assertEqual(battery["controllerExtremaSource"], "CID2_42_CELL_ARRAY")
 
 
 if __name__ == "__main__":

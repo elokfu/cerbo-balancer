@@ -24,14 +24,19 @@ values are diagnostic-only and do not alter telemetry validity, DVCC limits,
 or controller behavior.
 
 CID2 `0x42` remains the source for each battery's logical cell vector and
-per-battery extrema. When it reports 15 cells, cell 16 is reconstructed using
-the average addressed CID2 `0x42` voltage across the parallel pack. CID2 `0x61`
-is a master/system-summary response on this installation: only the master
-battery at address 2 answers it and supplies the system SOC, voltage, Vmin,
-Vmax, spread, and packed locations. Slave addresses are not polled for CID2
-`0x61`; their expected no-reply is not treated as a communication fault.
-Per-battery Vmin, Vmax, and spread are derived from each battery's own CID2
-`0x42` cell array. CID2 `0x44` is status-only and is never used as a
+per-battery extrema. When a pack reports 15 cells, cell 16 is reconstructed
+per battery from that battery's **own** pack voltage: `V16 = Vpack - sum(cells
+1..15)`. Because the pack voltage has about 10 mV resolution, the reconstruction
+is treated as a quantized constraint window (`Vpack ± 0.005 V - sum15`). A
+per-battery predictor advances cell 16 by the median movement of the reported
+cells and clamps it into that window; the first sample is seeded with the
+median reported cell voltage. Estimator state is kept separately per battery
+and is reset after a communication loss, invalid telemetry, or a pack-voltage
+jump larger than 0.5 V (battery restart). Only the clamped estimate drives
+Vmin/Vmax/spread and balancing detection; the raw subtraction result is never
+used for the 30 mV threshold. Cell 16 is explicitly marked `calculated` /
+`reconstructed`, and internal floating-point precision is preserved (rounding
+happens only in the UI). CID2 `0x44` is status-only and is never used as a
 cell-voltage source.
 
 The CID2 `0x63` status byte is decoded and retained as `limits.statusFlags`.
