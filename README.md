@@ -109,12 +109,19 @@ See [RS485 investigation](docs/rs485-investigation.md), [dashboard operation](do
 
 Captured live deployment artifacts are kept in this repository:
 
-- `deploy/live-flows-20260818.json` — the full live Node-RED flow snapshot
-  (balancer and hot-water tabs) as deployed on 2026-08-18.
+- `deploy/node-red-flows-latest.json` — the full live Node-RED flow snapshot
+  (balancer and hot-water tabs) as deployed on the Cerbo.
+- `deploy/deploy-cerbo-nodered.sh` — deploys that snapshot to the Cerbo's
+  Node-RED (`/data/home/nodered/flows.json`) with backup, validation, and
+  rollback hints. Dry-run with `--dry-run`; the flow source defaults to
+  `node-red-flows-latest.json` next to the script.
 - `deploy/cerbo-rc.local` — current `/data/rc.local` on the Cerbo (registers
   the persistent RS485 balancer service).
 - `deploy/cerbo-rc.local.bak-before-spy-removal-20260818` — the pre-removal
   boot config including the former `dyness-can-spy` registration.
+- `docs/D0080en.pdf` — Dyness D0080 battery manual used as a protocol
+  reference.
+- `scripts/dyness_pylon_cells.py` — read-only Dyness/Pylon RS485 cell probe.
 - `docs/reference/dyness_rs485_service.py.before-master-only-61-20260817-070515`
   — the service as it was before the master-only CID2 0x61 change.
 - `archive/dyness-can-spy/` — the removed CAN spy application and capture data
