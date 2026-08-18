@@ -1,9 +1,15 @@
 'use strict'
 
 const assert = require('assert/strict')
-const { STATES, CONTROLLER_VERSION, DEFAULT_CONFIG, createBalancerController, validateConfig } = require('../src/controller')
+const { STATES, CONTROLLER_VERSION, DEFAULT_CONFIG, createBalancerController: createRawController, validateConfig } = require('../src/controller')
 
 let clock = 1000000
+
+function createBalancerController (options = {}) {
+  const controller = createRawController(options)
+  controller.handle({ type: 'configure', config: { ...controller.getConfig(), qualificationSamples: 1 }, timestamp: clock })
+  return controller
+}
 
 function battery (address = 2, overrides = {}) {
   const cells = Array.from({ length: 16 }, (_, index) => ({ index: index + 1, voltage: 3.40 + index / 1000 }))
@@ -36,7 +42,7 @@ function telemetry (batteryValues = [battery()], overrides = {}) {
     addressedSystemTelemetryValid: true,
     ccl: 100,
     cvl: 56.5,
-    limits: { statusFlags: { chargeEnabled: true, dischargeEnabled: true } },
+    limits: { chargeVoltage: 56.5, chargeCurrent: 100, statusFlags: { chargeEnabled: true, dischargeEnabled: true } },
     effectiveControl: { effectiveChargeCurrent: 100, thermalFactor: 1, statusFlags: { chargeEnabled: true } },
     chargeControlSettings: {
       readbackValid: true,
@@ -109,10 +115,10 @@ assert.equal(lock.getState().selectedAddress, 2)
 sample(lock, [battery(2, { spread: 0.010 }), battery(3, { spread: 0.090 })])
 assert.equal(lock.getState().selectedAddress, 2)
 
-// Effective discharge completion is strict below 30 mV and does not latch full SOC.
-sample(lock, [battery(2, { soc: 99, spread: 0.030, status44: { status1: { active: [] }, status2: { chargeMosfet: true }, status3: { effectiveDischarging: true } } }), battery(3, { spread: 0.020 })])
+// Charged-current completion is strict below 30 mV and does not latch full SOC.
+  sample(lock, [battery(2, { soc: 99, current: 2, spread: 0.030, status44: { status1: { active: [] }, status2: { chargeMosfet: true }, status3: { effectiveDischarging: true } } }), battery(3, { spread: 0.020 })])
 assert.equal(lock.getState().state, STATES.BALANCING)
-sample(lock, [battery(2, { soc: 99, spread: 0.029, status44: { status1: { active: [] }, status2: { chargeMosfet: true }, status3: { effectiveDischarging: true } } }), battery(3, { spread: 0.020 })])
+  sample(lock, [battery(2, { soc: 99, current: 2, spread: 0.029, status44: { status1: { active: [] }, status2: { chargeMosfet: true }, status3: { effectiveDischarging: true } } }), battery(3, { spread: 0.020 })])
 assert.equal(lock.getState().state, STATES.NORMAL)
 assert.equal(lock.getState().completionLatched, false)
 assert.equal(lock.getState().lastStopReason, 'BALANCE_DISCHARGE_COMPLETE')
@@ -249,3 +255,94 @@ assert.equal(command(piActions).effectiveFeedForwardCurrent, 0)
 piActions = sample(piOnly, [battery(2, { current: 0.5 })])
 assert.equal(command(piActions).effectiveFeedForwardCurrent, 0)
 assert.ok(piOnly.getState().aggregateCurrentCommand <= 2 + 10 * 8 / 60 + 1e-9)
+
+// Eight unique samples qualify entry; ticks and interrupted sequences do not.
+const qualifiedEntry = createRawController({ now: () => clock })
+for (let index = 0; index < 7; index++) sample(qualifiedEntry, [battery(2)])
+assert.equal(qualifiedEntry.getState().state, STATES.NORMAL)
+qualifiedEntry.handle({ type: 'tick', timestamp: clock })
+assert.equal(qualifiedEntry.getStatus().entryQualification[0].samples, 7)
+sample(qualifiedEntry, [battery(2)])
+assert.equal(qualifiedEntry.getState().state, STATES.BALANCING)
+
+const interruptedEntry = createRawController({ now: () => clock })
+for (let index = 0; index < 7; index++) sample(interruptedEntry, [battery(2)])
+sample(interruptedEntry, [battery(2, { spread: 0.030 })])
+assert.equal(interruptedEntry.getStatus().entryQualification[0].samples, 0)
+
+const independentEntry = createRawController({ now: () => clock })
+for (let index = 0; index < 7; index++) sample(independentEntry, [battery(2), battery(3)])
+sample(independentEntry, [battery(2, { spread: 0.030 }), battery(3)])
+assert.equal(independentEntry.getState().selectedAddress, 3)
+
+// Exit requires eight selected-battery samples above 1.5 A and below 30 mV.
+const qualifiedExit = createRawController({ now: () => clock })
+for (let index = 0; index < 8; index++) sample(qualifiedExit, [battery(2)])
+for (let index = 0; index < 7; index++) sample(qualifiedExit, [battery(2, { current: 2, spread: 0.029 })])
+assert.equal(qualifiedExit.getState().state, STATES.BALANCING)
+qualifiedExit.handle({ type: 'tick', timestamp: clock })
+assert.equal(qualifiedExit.getStatus().exitQualification.samples, 7)
+sample(qualifiedExit, [battery(2, { current: 2, spread: 0.029 })])
+assert.equal(qualifiedExit.getState().state, STATES.NORMAL)
+
+const interruptedExit = createRawController({ now: () => clock })
+for (let index = 0; index < 8; index++) sample(interruptedExit, [battery(2)])
+for (let index = 0; index < 7; index++) sample(interruptedExit, [battery(2, { current: 2, spread: 0.029 })])
+sample(interruptedExit, [battery(2, { current: 1.5, spread: 0.029 })])
+assert.equal(interruptedExit.getStatus().exitQualification.samples, 0)
+sample(interruptedExit, [battery(2, { current: 2, spread: 0.030 })])
+assert.equal(interruptedExit.getStatus().exitQualification.samples, 0)
+
+// Normal SOC derating uses the lowest BMS, UI, and SOC limit; balancing bypasses it.
+for (const [soc, expected] of [[96, 80], [97, 50], [98, 20], [99, 10], [100, 10]]) {
+  const derating = createRawController({ now: () => clock })
+  const actions = sample(derating, [battery(2, { spread: 0.020 })], {
+    system: { soc61: soc, voltage61: 54.4, maximumCellVoltage61: 3.49 },
+    limits: { chargeVoltage: 56.5, chargeCurrent: 90, statusFlags: { chargeEnabled: true, dischargeEnabled: true } },
+    chargeControlSettings: { maxChargeVoltage: 56, maxChargeCurrent: 80, voltageLimitEnabled: true, currentLimitEnabled: true }
+  })
+  assert.equal(command(actions).requestedCurrent, expected)
+}
+const bypassDerating = createRawController({ now: () => clock })
+for (let index = 0; index < 8; index++) sample(bypassDerating, [battery(2)], { system: { soc61: 99, voltage61: 54.4, maximumCellVoltage61: 3.49 } })
+assert.equal(bypassDerating.getState().state, STATES.BALANCING)
+assert.equal(command(bypassDerating.handle({ type: 'tick', timestamp: clock })).requestedCurrent, DEFAULT_CONFIG.feedForwardFallbackCurrent)
+
+// Float learning freezes the first eight-sample mean, survives low Vmax, and resets at SOC 98.
+const floatController = createRawController({ now: () => clock })
+for (let index = 0; index < 8; index++) sample(floatController, [battery(2, { spread: 0.020 })], {
+  system: { soc61: 99, voltage61: 54 + index * 0.1, maximumCellVoltage61: 3.5 }
+})
+assert.equal(floatController.getStatus().floatControl.qualified, true)
+assert.ok(Math.abs(floatController.getStatus().floatControl.voltage - 54.35) < 1e-9)
+sample(floatController, [battery(2, { spread: 0.020 })], { system: { soc61: 99, voltage61: 56, maximumCellVoltage61: 3.49 } })
+assert.ok(Math.abs(floatController.getStatus().floatControl.voltage - 54.35) < 1e-9)
+sample(floatController, [battery(2, { spread: 0.020 })], { system: { soc61: 98, voltage61: 54, maximumCellVoltage61: 3.49 } })
+assert.equal(floatController.getStatus().floatControl.voltage, 56.5)
+assert.equal(floatController.getStatus().floatControl.qualified, false)
+
+// A qualified float survives persistence and is activated by full-SOC completion.
+const activeFloat = createRawController({ now: () => clock })
+for (let index = 0; index < 8; index++) sample(activeFloat, [battery(2)], {
+  system: { soc61: 99, voltage61: 54 + index * 0.1, maximumCellVoltage61: 3.5 }
+})
+const fullFloatActions = sample(activeFloat, [battery(2, { soc: 100 })], {
+  system: { soc61: 100, voltage61: 55, maximumCellVoltage61: 3.5 },
+  limits: { chargeVoltage: 55.2, chargeCurrent: 0, statusFlags: { chargeEnabled: false, dischargeEnabled: true } },
+  chargeControlSettings: { maxChargeVoltage: 55, maxChargeCurrent: 80, voltageLimitEnabled: true, currentLimitEnabled: true }
+})
+assert.equal(activeFloat.getState().completionLatched, true)
+assert.equal(activeFloat.getStatus().floatControl.active, true)
+assert.ok(Math.abs(command(fullFloatActions).requestedVoltage - 54.35) < 1e-9)
+
+const persistedFloat = activeFloat.getState()
+const restoredFloat = createRawController({ now: () => clock })
+restoredFloat.handle({ type: 'load', state: persistedFloat, config: activeFloat.getConfig(), timestamp: clock })
+assert.equal(restoredFloat.getState().floatQualified, true)
+assert.ok(Math.abs(restoredFloat.getState().floatVoltage - 54.35) < 1e-9)
+assert.equal(restoredFloat.getStatus().floatControl.samples, DEFAULT_CONFIG.qualificationSamples)
+
+const migratedFloat = createRawController({ now: () => clock })
+migratedFloat.handle({ type: 'load', state: { version: 5, state: STATES.NORMAL, floatQualified: true, floatVoltage: 54.1 }, config: {}, timestamp: clock })
+assert.equal(migratedFloat.getState().floatQualified, false)
+assert.equal(migratedFloat.getState().floatVoltage, 56.5)

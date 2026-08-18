@@ -6,7 +6,11 @@ const STATES = Object.freeze({
   SAFETY_STOP: 'SAFETY_STOP'
 })
 
-const CONTROLLER_VERSION = 5
+const CONTROLLER_VERSION = 6
+
+const FLOAT_CELL_THRESHOLD = 3.5
+const FLOAT_DEFAULT_VOLTAGE = 56.5
+const BALANCE_EXIT_CURRENT_THRESHOLD = 1.5
 
 const DEFAULT_CONFIG = Object.freeze({
   balancingVoltageCeiling: 56.5,
@@ -28,6 +32,7 @@ const DEFAULT_CONFIG = Object.freeze({
   currentIncreaseRatePerMin: 10.0,
   solarShortfallTolerance: 2.0,
   solarDetectionSamples: 4,
+  qualificationSamples: 8,
   permissionRearmDebounceMs: 5000,
   telemetryStaleMs: 20000
 })
@@ -55,6 +60,14 @@ function emptyState () {
     solarLimited: false,
     solarDeficitSamples: 0,
     solarRecoverySamples: 0,
+    entryQualificationSamples: {},
+    exitQualificationSamples: 0,
+    lastQualificationTelemetryTimestamp: null,
+    floatVoltage: FLOAT_DEFAULT_VOLTAGE,
+    floatQualified: false,
+    floatQualifiedAt: null,
+    floatSampleCount: 0,
+    floatVoltageSum: 0,
     lastControlSampleTimestamp: null,
     lastTransitionAt: null,
     lastStopReason: null,
@@ -78,7 +91,7 @@ function validateConfig (candidate = {}) {
     'currentTargetTolerance', 'feedForwardAlpha', 'shareMinimumSelectedCurrent',
     'shareMinimumTotalCurrent', 'feedForwardFallbackCurrent', 'kp', 'ki',
     'maxIntegralTerm', 'aggregateCurrentMaximum', 'currentIncreaseRatePerMin',
-    'solarShortfallTolerance', 'solarDetectionSamples', 'permissionRearmDebounceMs',
+    'solarShortfallTolerance', 'solarDetectionSamples', 'qualificationSamples', 'permissionRearmDebounceMs',
     'telemetryStaleMs'
   ]
   for (const field of positive) {
@@ -98,6 +111,9 @@ function validateConfig (candidate = {}) {
   }
   if (!Number.isInteger(config.solarDetectionSamples)) {
     errors.push('solarDetectionSamples must be an integer')
+  }
+  if (!Number.isInteger(config.qualificationSamples)) {
+    errors.push('qualificationSamples must be an integer')
   }
   return { valid: errors.length === 0, errors, config }
 }
@@ -145,6 +161,7 @@ function createBalancerController (options = {}) {
   function releaseSelection () {
     state.selectedAddress = null
     state.selectedReason = null
+    state.exitQualificationSamples = 0
   }
 
   function migrateState (persisted = {}) {
@@ -155,12 +172,24 @@ function createBalancerController (options = {}) {
       migrated.automaticBalancingEnabled = persisted.enabled
     }
     migrated.csvLogging = persisted.csvLogging || migrated.csvLogging
-    migrated.completionLatched = [3, 4, CONTROLLER_VERSION].includes(persisted.version) && persisted.completionLatched === true
-    migrated.permissionOffSeen = [3, 4, CONTROLLER_VERSION].includes(persisted.version) && persisted.permissionOffSeen === true
-    if ([3, 4, CONTROLLER_VERSION].includes(persisted.version) && Object.values(STATES).includes(persisted.state)) {
+    const compatibleVersions = [3, 4, 5, CONTROLLER_VERSION]
+    migrated.completionLatched = compatibleVersions.includes(persisted.version) && persisted.completionLatched === true
+    migrated.permissionOffSeen = compatibleVersions.includes(persisted.version) && persisted.permissionOffSeen === true
+    if (compatibleVersions.includes(persisted.version) && Object.values(STATES).includes(persisted.state)) {
       const { enabled, autoManualMode, mode, ...current } = persisted
       Object.assign(migrated, current)
       migrated.version = CONTROLLER_VERSION
+      migrated.entryQualificationSamples = {}
+      migrated.exitQualificationSamples = 0
+      migrated.lastQualificationTelemetryTimestamp = null
+      migrated.floatSampleCount = 0
+      migrated.floatVoltageSum = 0
+      if (!finite(migrated.floatVoltage) || migrated.floatVoltage <= 0) migrated.floatVoltage = FLOAT_DEFAULT_VOLTAGE
+      if (persisted.version !== CONTROLLER_VERSION) {
+        migrated.floatVoltage = FLOAT_DEFAULT_VOLTAGE
+        migrated.floatQualified = false
+        migrated.floatQualifiedAt = null
+      }
       if (typeof persisted.automaticBalancingEnabled !== 'boolean' && typeof enabled === 'boolean') {
         migrated.automaticBalancingEnabled = enabled
       }
@@ -247,14 +276,32 @@ function createBalancerController (options = {}) {
   }
   function normalChargeVoltage () {
     const settings = chargeControlSettings()
-    if (settings.voltageLimitEnabled === true && finite(settings.maxChargeVoltage)) return settings.maxChargeVoltage
-    return finite(limits().chargeVoltage) ? limits().chargeVoltage : config.safetyFallbackVoltage
+    const candidates = [{ source: 'HARD_CEILING', value: config.balancingVoltageCeiling }]
+    if (finite(limits().chargeVoltage)) candidates.push({ source: 'BMS_CVL', value: limits().chargeVoltage })
+    if (settings.voltageLimitEnabled === true && finite(settings.maxChargeVoltage)) candidates.push({ source: 'CERBO_UI_CVL', value: settings.maxChargeVoltage })
+    if (floatCvlActive()) candidates.push({ source: state.floatQualified ? 'LEARNED_FLOAT' : 'DEFAULT_FLOAT', value: state.floatVoltage })
+    return candidates.reduce((lowest, candidate) => candidate.value < lowest.value ? candidate : lowest).value
   }
-  function normalChargeCurrent () {
+  function socCurrentCap () {
+    const soc = masterSoc()
+    if (soc === 97) return 50
+    if (soc === 98) return 20
+    if (soc >= 99) return 10
+    return null
+  }
+  function normalCurrentPolicy () {
     const settings = chargeControlSettings()
-    if (settings.currentLimitEnabled === true && finite(settings.maxChargeCurrent)) return Math.max(0, settings.maxChargeCurrent)
-    return finite(limits().chargeCurrent) ? Math.max(0, limits().chargeCurrent) : config.safetyFallbackCurrent
+    const candidates = []
+    if (finite(limits().chargeCurrent)) candidates.push({ source: 'BMS_CCL', value: Math.max(0, limits().chargeCurrent) })
+    if (settings.currentLimitEnabled === true && finite(settings.maxChargeCurrent)) candidates.push({ source: 'CERBO_UI_CCL', value: Math.max(0, settings.maxChargeCurrent) })
+    const cap = socCurrentCap()
+    if (finite(cap)) candidates.push({ source: 'SOC_DERATING', value: cap })
+    if (!candidates.length) candidates.push({ source: 'SAFETY_FALLBACK', value: config.safetyFallbackCurrent })
+    const limiting = candidates.reduce((lowest, candidate) => candidate.value < lowest.value ? candidate : lowest)
+    return { value: limiting.value, source: limiting.source, socCap: cap }
   }
+  function normalChargeCurrent () { return normalCurrentPolicy().value }
+  function floatCvlActive () { return state.completionLatched && masterSoc() === 100 }
   function chargePermitted () { return limits().statusFlags && limits().statusFlags.chargeEnabled === true }
   function ccl () { return finite(telemetry && telemetry.ccl) ? Math.max(0, telemetry.ccl) : null }
   function virtualBmsSelected () { return Boolean(telemetry && telemetry.activeBms && telemetry.activeBms.virtualSelected === true) }
@@ -264,11 +311,82 @@ function createBalancerController (options = {}) {
       chargeMosfetOn(battery) && !localProtection(battery))
   }
 
+  function resetIncompleteQualifications () {
+    state.entryQualificationSamples = {}
+    state.exitQualificationSamples = 0
+    state.floatSampleCount = 0
+    state.floatVoltageSum = 0
+  }
+
+  function updateFloatVoltageSample (timestamp) {
+    const system = telemetry && telemetry.system ? telemetry.system : {}
+    const soc = masterSoc()
+    if (soc != null && soc <= 98) {
+      state.floatVoltage = FLOAT_DEFAULT_VOLTAGE
+      state.floatQualified = false
+      state.floatQualifiedAt = null
+      state.floatSampleCount = 0
+      state.floatVoltageSum = 0
+      return
+    }
+    if (state.floatQualified) return
+    if (!finite(system.maximumCellVoltage61) || !finite(system.voltage61) || system.maximumCellVoltage61 < FLOAT_CELL_THRESHOLD) {
+      state.floatSampleCount = 0
+      state.floatVoltageSum = 0
+      return
+    }
+    state.floatSampleCount += 1
+    state.floatVoltageSum += system.voltage61
+    if (state.floatSampleCount >= config.qualificationSamples) {
+      state.floatVoltage = state.floatVoltageSum / state.floatSampleCount
+      state.floatQualified = true
+      state.floatQualifiedAt = timestamp
+      record(timestamp, 'FLOAT_VOLTAGE_QUALIFIED', 'pack-voltage average frozen after qualified high-cell samples', {
+        floatVoltage: state.floatVoltage,
+        samples: state.floatSampleCount
+      })
+    }
+  }
+
+  function updateSampleQualifications (timestamp, health) {
+    if (!health.valid) {
+      resetIncompleteQualifications()
+      return false
+    }
+    const sampleTimestamp = telemetry && telemetry.timestamp
+    if (!finite(sampleTimestamp) || sampleTimestamp === state.lastQualificationTelemetryTimestamp) return false
+    state.lastQualificationTelemetryTimestamp = sampleTimestamp
+    updateFloatVoltageSample(timestamp)
+
+    if (state.automaticBalancingEnabled && !state.completionLatched) {
+      const next = {}
+      for (const battery of batteries()) {
+        next[battery.address] = eligible(battery)
+          ? (state.entryQualificationSamples[battery.address] || 0) + 1
+          : 0
+      }
+      state.entryQualificationSamples = next
+    } else {
+      state.entryQualificationSamples = {}
+    }
+
+    const selected = batteryByAddress(state.selectedAddress)
+    state.exitQualificationSamples = state.state === STATES.BALANCING && selected &&
+      selected.current > BALANCE_EXIT_CURRENT_THRESHOLD && selected.spread < config.balancerSpreadThreshold
+      ? state.exitQualificationSamples + 1
+      : 0
+    return true
+  }
+
+  function entryQualified (battery) {
+    return eligible(battery) && (state.entryQualificationSamples[battery.address] || 0) >= config.qualificationSamples
+  }
+
   function selectCandidate (timestamp, excludedAddress = null, manualAddress = null) {
     const ordered = batteries().slice().sort((a, b) => a.address - b.address)
     const candidate = manualAddress != null
-      ? ordered.find(battery => battery.address === manualAddress && battery.address !== excludedAddress && eligible(battery))
-      : ordered.find(battery => battery.address !== excludedAddress && eligible(battery))
+      ? ordered.find(battery => battery.address === manualAddress && battery.address !== excludedAddress && entryQualified(battery))
+      : ordered.find(battery => battery.address !== excludedAddress && entryQualified(battery))
     if (!candidate) return null
     state.selectedAddress = candidate.address
     state.selectedReason = manualAddress != null ? 'manual operator selection' : 'first eligible battery in address order'
@@ -441,6 +559,7 @@ function createBalancerController (options = {}) {
   function evaluate (timestamp) {
     const actions = []
     const health = freshTelemetry(timestamp)
+    updateSampleQualifications(timestamp, health)
     let command = normalCommand('NORMAL_POLICY')
 
     if (!state.automaticBalancingEnabled) {
@@ -478,10 +597,10 @@ function createBalancerController (options = {}) {
         selected = selectCandidate(timestamp, releasedAddress)
         if (!selected) transition(STATES.NORMAL, timestamp, 'no other eligible battery')
         command = selected ? balancingCommand(timestamp, selected) : normalCommand('NO_ELIGIBLE_BATTERY')
-      } else if (state.state === STATES.BALANCING && selected && effectiveDischarging(selected) &&
-        batterySoc(selected) < 100 && selected.spread < config.balancerSpreadThreshold) {
+      } else if (state.state === STATES.BALANCING && selected &&
+        state.exitQualificationSamples >= config.qualificationSamples) {
         state.lastStopReason = 'BALANCE_DISCHARGE_COMPLETE'
-        record(timestamp, 'BALANCE_DISCHARGE_COMPLETE', 'effective discharge with SOC below 100 and spread below threshold', { selectedAddress: selected.address })
+        record(timestamp, 'BALANCE_DISCHARGE_COMPLETE', 'selected battery charged above 1.5 A with spread below threshold for the required samples', { selectedAddress: selected.address })
         resetControl()
         releaseSelection()
         transition(STATES.NORMAL, timestamp, 'selected battery discharge completion')
@@ -542,6 +661,7 @@ function createBalancerController (options = {}) {
           ? (telemetry.activeBms.virtualSelected === true ? 'APPLIED' : 'SHADOW')
           : 'UNKNOWN')
       : 'UNKNOWN'
+    const currentPolicy = normalCurrentPolicy()
     return {
       state: state.state,
       automaticBalancingEnabled: state.automaticBalancingEnabled,
@@ -576,6 +696,28 @@ function createBalancerController (options = {}) {
       solarDeficitSamples: state.solarDeficitSamples,
       solarRecoverySamples: state.solarRecoverySamples,
       completionLatched: state.completionLatched,
+      normalCurrentPolicy: currentPolicy,
+      entryQualification: batteries().map(battery => ({
+        address: battery.address,
+        samples: state.entryQualificationSamples[battery.address] || 0,
+        required: config.qualificationSamples,
+        qualified: entryQualified(battery)
+      })),
+      exitQualification: {
+        samples: state.exitQualificationSamples,
+        required: config.qualificationSamples,
+        currentThreshold: BALANCE_EXIT_CURRENT_THRESHOLD,
+        qualified: state.exitQualificationSamples >= config.qualificationSamples
+      },
+      floatControl: {
+        voltage: state.floatVoltage,
+        qualified: state.floatQualified,
+        qualifiedAt: state.floatQualifiedAt,
+        samples: state.floatQualified ? config.qualificationSamples : state.floatSampleCount,
+        required: config.qualificationSamples,
+        maximumCellThreshold: FLOAT_CELL_THRESHOLD,
+        active: floatCvlActive()
+      },
       permissionOffSeen: state.permissionOffSeen,
       permissionOnStartedAt: state.permissionOnStartedAt,
       excludedBatteries,
@@ -592,7 +734,7 @@ function createBalancerController (options = {}) {
     const timestamp = finite(message.timestamp) ? message.timestamp : now()
     if (message.type === 'load') {
       const persistedVersion = message.state && message.state.version
-      const currentVersion = [3, 4, CONTROLLER_VERSION].includes(persistedVersion)
+      const currentVersion = [3, 4, 5, CONTROLLER_VERSION].includes(persistedVersion)
       state = migrateState(message.state || {})
       const candidateConfig = currentVersion ? { ...(message.config || {}) } : {}
       if (persistedVersion !== CONTROLLER_VERSION && candidateConfig.ki === 0.002) candidateConfig.ki = DEFAULT_CONFIG.ki
@@ -644,6 +786,10 @@ function createBalancerController (options = {}) {
       state.permissionOnStartedAt = null
       state.lastStopReason = null
       state.fault = null
+      resetIncompleteQualifications()
+      state.floatVoltage = FLOAT_DEFAULT_VOLTAGE
+      state.floatQualified = false
+      state.floatQualifiedAt = null
       resetControl()
       releaseSelection()
       transition(STATES.NORMAL, timestamp, 'controller defaults restored')
