@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from collections import deque
 import json
 import os
 import subprocess
@@ -460,6 +461,11 @@ class CsvLogger:
         "vmin_v", "vmin_location", "vmax_v", "vmax_location", "spread_mv",
         "status1", "status2",
         "status3", "status4", "status5",
+        "cell16_raw_v", "cell16_common_v", "cell16_raw_offset_mv",
+        "cell16_filtered_offset_mv", "cell16_target_offset_mv",
+        "cell16_pack_residual_mv", "cell16_filter_gain",
+        "cell16_persistent_error_samples", "cell16_constraint_source",
+        "cell16_constraint_applied", "cell16_corroborated",
         *[f"cell_{index:02d}_v" for index in range(1, 17)],
         *[f"temp_{index:02d}_c" for index in range(1, 6)],
     ]
@@ -605,13 +611,8 @@ class CsvLogger:
             with target.open("r", encoding="utf-8") as stream:
                 header = next((line.rstrip("\n") for line in stream if not line.startswith("#")), "")
             existing_columns = next(csv.reader([header]), []) if header else []
-            # A deployment may add diagnostic columns while a fixed-inventory
-            # recording is active. Continue that file using its original
-            # ordered subset; newly started files receive the current schema.
-            if existing_columns and all(column in columns for column in existing_columns):
-                columns = existing_columns
-            elif header != ",".join(columns):
-                return {"written": False}
+            if existing_columns != columns:
+                return self._stop(name, "CSV schema changed; start a new recording file")
         system = snapshot.get("system") or {}
         limits = snapshot.get("limits") or {}
         aggregate = snapshot.get("aggregate") or {}
@@ -677,6 +678,17 @@ class CsvLogger:
             row[prefix + "spread_mv"] = self._format_spread_mv(battery.get("spread"))
             row[prefix + "vmin_location"] = f"battery {battery.get('vminAddress')} cell {battery.get('vminIndex')}"
             row[prefix + "vmax_location"] = f"battery {battery.get('vmaxAddress')} cell {battery.get('vmaxIndex')}"
+            row[prefix + "cell16_raw_v"] = self._format_cell_voltage(battery.get("rawCalculatedCellVoltage"))
+            row[prefix + "cell16_common_v"] = self._format_cell_voltage(battery.get("cell16CommonVoltage"))
+            row[prefix + "cell16_raw_offset_mv"] = self._format_number(battery.get("cell16RawOffsetMv"), 3)
+            row[prefix + "cell16_filtered_offset_mv"] = self._format_number(battery.get("cell16FilteredOffsetMv"), 3)
+            row[prefix + "cell16_target_offset_mv"] = self._format_number(battery.get("cell16TargetOffsetMv"), 3)
+            row[prefix + "cell16_pack_residual_mv"] = self._format_number(battery.get("cell16PackResidualMv"), 3)
+            row[prefix + "cell16_filter_gain"] = self._format_number(battery.get("cell16FilterGain"), 2)
+            row[prefix + "cell16_persistent_error_samples"] = battery.get("cell16PersistentErrorSamples")
+            row[prefix + "cell16_constraint_source"] = battery.get("cell16ConstraintSource")
+            row[prefix + "cell16_constraint_applied"] = battery.get("cell16ConstraintApplied")
+            row[prefix + "cell16_corroborated"] = battery.get("cell16Corroborated")
             status = battery.get("status44") or {}
             for index in range(1, 6):
                 row[prefix + f"status{index}"] = self._format_status_byte(
@@ -687,7 +699,7 @@ class CsvLogger:
         row = {column: row.get(column, "") for column in columns}
         with target.open("a", newline="", encoding="utf-8") as stream:
             if not exists:
-                stream.write(f"# schema_version=12\n# serial_port={snapshot.get('serialPort')}\n# baud={snapshot.get('baud')}\n# poll_interval_seconds=8\n# timestamp_format=HH:MM:SS {self.timezone_name}\n# virtual_bms_service=com.victronenergy.battery.rs485_dyness\n# virtual_bms_device_instance=100\n# dvcc_authority=cerbo_battery_monitor_selection\n# status1_bits=bit7 pack under-voltage protection; bit6 charge temperature protection; bit5 discharge temperature protection; bit4 discharge over-current protection; bit3 reserved; bit2 charge over-current protection; bit1 cell under-voltage protection; bit0 over-voltage protection\n# status2_bits=bit7-bit4 reserved; bit3 module power active; bit2 discharge MOSFET on; bit1 charge MOSFET on; bit0 precharge MOSFET on\n# status3_bits=bit7 effective charging; bit6 effective discharging; bit5 heater active; bit4-bit2 reserved; bit3 fully charged; bit2-bit1 reserved; bit0 buzzer active\n# status4_bits=bit7-bit0 cell voltage-check faults for cells 8-1 respectively\n# status5_bits=bit7-bit0 cell voltage-check faults for cells 16-9 respectively\n# initial_addresses={','.join(str(address) for address in self.initial_addresses)}\n")
+                stream.write(f"# schema_version=13\n# serial_port={snapshot.get('serialPort')}\n# baud={snapshot.get('baud')}\n# poll_interval_seconds=8\n# timestamp_format=HH:MM:SS {self.timezone_name}\n# virtual_bms_service=com.victronenergy.battery.rs485_dyness\n# virtual_bms_device_instance=100\n# dvcc_authority=cerbo_battery_monitor_selection\n# status1_bits=bit7 pack under-voltage protection; bit6 charge temperature protection; bit5 discharge temperature protection; bit4 discharge over-current protection; bit3 reserved; bit2 charge over-current protection; bit1 cell under-voltage protection; bit0 over-voltage protection\n# status2_bits=bit7-bit4 reserved; bit3 module power active; bit2 discharge MOSFET on; bit1 charge MOSFET on; bit0 precharge MOSFET on\n# status3_bits=bit7 effective charging; bit6 effective discharging; bit5 heater active; bit4-bit2 reserved; bit3 fully charged; bit2-bit1 reserved; bit0 buzzer active\n# status4_bits=bit7-bit0 cell voltage-check faults for cells 8-1 respectively\n# status5_bits=bit7-bit0 cell voltage-check faults for cells 16-9 respectively\n# initial_addresses={','.join(str(address) for address in self.initial_addresses)}\n")
                 csv.DictWriter(stream, fieldnames=columns).writeheader()
             csv.DictWriter(stream, fieldnames=columns).writerow(row)
         self.next_sample_number += 1
@@ -851,23 +863,31 @@ def soc61_is_valid(soc61: Any) -> bool:
 
 
 class Cell16Estimator:
-    """Per-battery cell-16 reconstruction with pack-voltage quantization.
-
-    Dyness reports cells 1-15 at 1 mV resolution but omits cell 16.  Each
-    battery's own pack voltage is a quantized constraint (about 10 mV
-    resolution), so the raw subtraction can jump by +-5 mV.  A per-battery
-    predictor advances cell 16 by the median movement of the reported cells
-    and clamps it into the pack-voltage quantization window.  The first
-    sample is seeded with the median reported cell voltage.  Only the clamped
-    estimate is published; the raw subtraction result is never used directly.
-    """
+    """Track cell 16 as a filtered offset from common cell movement."""
 
     RESTART_VOLTAGE_JUMP_V = 0.5
+    STALE_STATE_MS = 20_000
+    OFFSET_WINDOW = 5
+    NORMAL_GAIN = 0.15
+    FAST_GAIN = 0.30
+    MAX_ERROR_V = 0.020
+    FAST_ERROR_V = 0.010
+    FAST_SAMPLES = 5
 
     def __init__(self) -> None:
         self._state: dict[int, dict[str, Any]] = {}
 
-    def estimate(self, battery: dict[str, Any]) -> float | None:
+    @staticmethod
+    def _common_voltage(values: list[float]) -> float:
+        ordered = sorted(values)
+        return sum(ordered[3:-3]) / 9.0
+
+    def estimate(
+        self,
+        battery: dict[str, Any],
+        extrema: dict[str, Any],
+        timestamp_ms: int,
+    ) -> dict[str, Any] | None:
         address = battery.get("address")
         cells = battery.get("reportedCells") or []
         voltage = battery.get("voltage")
@@ -875,34 +895,100 @@ class Cell16Estimator:
         if (
             address is None or len(values) != 15 or
             not isinstance(voltage, (int, float)) or
-            not 40.0 <= float(voltage) <= 70.0
+            not 40.0 <= float(voltage) <= 70.0 or
+            not extrema.get("valid") or
+            not isinstance(timestamp_ms, int)
         ):
+            self.reset(address)
+            return None
+        minimum = extrema.get("vmin")
+        maximum = extrema.get("vmax")
+        if not isinstance(minimum, (int, float)) or not isinstance(maximum, (int, float)):
             self.reset(address)
             return None
         pack_voltage = float(voltage)
         reported_sum = sum(values)
-        lower = pack_voltage - 0.005 - reported_sum
-        upper = pack_voltage + 0.005 - reported_sum
+        common = self._common_voltage(values)
+        raw_cell16 = pack_voltage - reported_sum
+        raw_offset = raw_cell16 - common
         previous = self._state.get(address)
-        if previous is not None and abs(pack_voltage - previous["voltage"]) > self.RESTART_VOLTAGE_JUMP_V:
+        if previous is not None and timestamp_ms == previous["timestamp"]:
+            return dict(previous["result"])
+        if previous is not None and (
+            timestamp_ms - previous["timestamp"] > self.STALE_STATE_MS or
+            abs(pack_voltage - previous["voltage"]) > self.RESTART_VOLTAGE_JUMP_V
+        ):
             self.reset(address)
             previous = None
-        if previous is not None and len(previous["cells"]) == 15:
-            delta = _median([cur - prev for cur, prev in zip(values, previous["cells"])])
-            predicted = previous["cell16"] + delta
+        if previous is None:
+            raw_offsets = deque([raw_offset], maxlen=self.OFFSET_WINDOW)
+            filtered_offset = raw_offset
+            persistent_sign = 0
+            persistent_samples = 0
+            gain = self.NORMAL_GAIN
         else:
-            predicted = _median(values)
-        cell16 = min(max(predicted, lower), upper)
-        self._state[address] = {"cells": values, "voltage": pack_voltage, "cell16": cell16}
-        return cell16
+            raw_offsets = deque(previous["rawOffsets"], maxlen=self.OFFSET_WINDOW)
+            raw_offsets.append(raw_offset)
+            filtered_offset = previous["filteredOffset"]
+            target = _median(list(raw_offsets))
+            error = target - filtered_offset
+            sign = 1 if error > 0 else -1 if error < 0 else 0
+            if abs(error) > self.FAST_ERROR_V:
+                persistent_sign = sign
+                persistent_samples = previous["persistentSamples"] + 1 if sign == previous["persistentSign"] else 1
+            else:
+                persistent_sign = 0
+                persistent_samples = 0
+            gain = self.FAST_GAIN if persistent_samples >= self.FAST_SAMPLES else self.NORMAL_GAIN
+            filtered_offset += gain * min(max(error, -self.MAX_ERROR_V), self.MAX_ERROR_V)
+        target_offset = _median(list(raw_offsets))
+        candidate = common + filtered_offset
+        constraint_source = "CID61_RANGE"
+        corroborated = False
+        if extrema.get("minCellAddress") == address and extrema.get("minCellIndex") == 16:
+            published = float(minimum)
+            constraint_source = "CID61_MIN"
+            corroborated = True
+        elif extrema.get("maxCellAddress") == address and extrema.get("maxCellIndex") == 16:
+            published = float(maximum)
+            constraint_source = "CID61_MAX"
+            corroborated = True
+        else:
+            published = min(max(candidate, float(minimum)), float(maximum))
+        constraint_applied = corroborated or abs(published - candidate) > 1e-12
+        filtered_offset = published - common
+        result = {
+            "rawCalculatedCellVoltage": raw_cell16,
+            "calculatedCellVoltage": published,
+            "cell16CommonVoltage": common,
+            "cell16RawOffsetMv": raw_offset * 1000.0,
+            "cell16FilteredOffsetMv": filtered_offset * 1000.0,
+            "cell16TargetOffsetMv": target_offset * 1000.0,
+            "cell16PackResidualMv": (pack_voltage - (reported_sum + published)) * 1000.0,
+            "cell16FilterGain": gain,
+            "cell16PersistentErrorSamples": persistent_samples,
+            "cell16ConstraintSource": constraint_source,
+            "cell16ConstraintApplied": constraint_applied,
+            "cell16Corroborated": corroborated,
+        }
+        self._state[address] = {
+            "rawOffsets": list(raw_offsets),
+            "filteredOffset": filtered_offset,
+            "persistentSign": persistent_sign,
+            "persistentSamples": persistent_samples,
+            "voltage": pack_voltage,
+            "timestamp": timestamp_ms,
+            "result": result,
+        }
+        return dict(result)
 
     def reset(self, address: int | None) -> None:
         if address is not None:
             self._state.pop(address, None)
 
-    def prune(self, present_addresses: set[int]) -> None:
-        for address in list(self._state):
-            if address not in present_addresses:
+    def prune(self, known_addresses: set[int], timestamp_ms: int) -> None:
+        for address, state in list(self._state.items()):
+            if address not in known_addresses or timestamp_ms - state["timestamp"] > self.STALE_STATE_MS:
                 del self._state[address]
 
 
@@ -1325,25 +1411,34 @@ class ReadOnlyPoller:
             discovery_scanned, discovery_complete = self._advance_discovery(
                 port, {item["address"]: item for item in batteries}
             )
-            # Per-battery cell-16 reconstruction.  Each battery's own pack
-            # voltage is a quantized constraint (about 10 mV resolution), so
-            # the raw subtraction can jump by +-5 mV.  A per-battery predictor
-            # advances cell 16 by the median movement of the reported cells and
-            # clamps it into the pack-voltage quantization window.  Only the
-            # clamped estimate drives Vmin/Vmax/spread and balancing detection;
-            # the raw subtraction result is never used for that.
+            sample_timestamp = now_ms()
+            global_extrema = system_cell_extrema(system_values)
+            known_addresses = set(self.active_addresses)
+            if global_extrema["valid"] and (
+                global_extrema["minCellAddress"] not in known_addresses or
+                global_extrema["maxCellAddress"] not in known_addresses
+            ):
+                global_extrema = {**global_extrema, "valid": False}
+                errors.append("CID2=61 cell extrema identify an unknown battery")
+            # Pack subtraction is a noisy per-battery observation.  Filter its
+            # offset from common cell movement, then constrain the result with
+            # fresh CID2 61 global extrema before it can affect control.
             for battery in batteries:
                 effective_cells = battery.get("effectiveCells") or []
                 address = battery.get("address")
                 if battery.get("calculatedCellIndex") == 16 and len(effective_cells) == 16:
-                    estimated = self.cell16_estimator.estimate(battery)
-                    if estimated is None:
+                    estimate = self.cell16_estimator.estimate(
+                        battery, global_extrema, sample_timestamp
+                    )
+                    if estimate is None:
                         battery["valid"] = False
                         battery["validationErrors"] = (battery.get("validationErrors") or []) + [
                             "cell 16 reconstruction unavailable"
                         ]
                         self.cell16_estimator.reset(address)
                         continue
+                    battery.update(estimate)
+                    estimated = estimate["calculatedCellVoltage"]
                     effective_cells[15]["voltage"] = estimated
                     battery["calculatedCellVoltage"] = estimated
                     battery["reconstructedCellSum"] = sum(
@@ -1391,7 +1486,7 @@ class ReadOnlyPoller:
                     })
                 if not battery.get("valid"):
                     self.cell16_estimator.reset(address)
-            self.cell16_estimator.prune({item["address"] for item in batteries})
+            self.cell16_estimator.prune(set(self.active_addresses), sample_timestamp)
             valid_batteries = [item for item in batteries if item["valid"]]
             expected_addresses = expected_addresses_before_discovery
             responding_addresses = {item["address"] for item in batteries}
@@ -1401,7 +1496,7 @@ class ReadOnlyPoller:
             all_expected_valid = (
                 complete_battery_set and len(valid_batteries) == len(batteries)
             )
-            extrema = system_cell_extrema(system_values)
+            extrema = global_extrema
             if not extrema["valid"]:
                 errors.append("CID2=61 cell extrema unavailable or invalid")
             snapshot = {

@@ -102,9 +102,14 @@ const inventory = current.inventory || displaySnapshot.inventory || {}
 const health = current.serialHealth || displaySnapshot.serialHealth || {}
 const systemMaximumCellVoltage = bounded(system.maximumCellVoltage61, 2, 4.5)
 const systemMinimumCellVoltage = bounded(system.minimumCellVoltage61, 2, 4.5)
-const bmsAverageTemperature = temperature(system.averageBmsTemperature61)
-const bmsMaximumTemperature = temperature(system.maximumBmsTemperature61)
-const bmsMinimumTemperature = temperature(system.minimumBmsTemperature61)
+  const bmsMaximumTemperature = temperature(system.maximumBmsTemperature61)
+  const bmsMinimumTemperature = temperature(system.minimumBmsTemperature61)
+  const reportedBmsAverageTemperature = temperature(system.averageBmsTemperature61)
+  const bmsAverageTemperature = reportedBmsAverageTemperature !== '—'
+    ? reportedBmsAverageTemperature
+    : Number.isFinite(Number(system.maximumBmsTemperature61)) && Number.isFinite(Number(system.minimumBmsTemperature61))
+      ? temperature((Number(system.maximumBmsTemperature61) + Number(system.minimumBmsTemperature61)) / 2)
+      : '—'
 const bmsMaximumId = sensorLocation(system.maximumBmsTemperatureId61, bmsMaximumTemperature)
 const bmsMinimumId = sensorLocation(system.minimumBmsTemperatureId61, bmsMinimumTemperature)
 const bmsSingleTemperature = bmsMaximumTemperature !== '—' && bmsMaximumTemperature === bmsMinimumTemperature && bmsMaximumId === bmsMinimumId
@@ -158,6 +163,20 @@ const batteries = (displaySnapshot.batteries || []).map((battery) => {
         reportedSum: number(battery.directlyReportedCellSum ?? battery.directly_reported_cell_sum),
         reconstructedSum: number(battery.reconstructedCellSum ?? battery.reconstructed_cell_sum),
         voltageDelta: number(battery.reconstructedVoltageDeltaMv ?? battery.reconstructed_voltage_delta_mv, 1),
+        cell16: {
+            raw: number(battery.rawCalculatedCellVoltage, 3),
+            published: number(battery.calculatedCellVoltage, 3),
+            common: number(battery.cell16CommonVoltage, 3),
+            rawOffsetMv: number(battery.cell16RawOffsetMv, 3),
+            filteredOffsetMv: number(battery.cell16FilteredOffsetMv, 3),
+            targetOffsetMv: number(battery.cell16TargetOffsetMv, 3),
+            residualMv: number(battery.cell16PackResidualMv, 3),
+            gain: number(battery.cell16FilterGain, 2),
+            persistentSamples: count(battery.cell16PersistentErrorSamples),
+            constraintSource: battery.cell16ConstraintSource || '—',
+            constraintApplied: battery.cell16ConstraintApplied === true,
+            corroborated: battery.cell16Corroborated === true
+        },
         errors: battery.validationErrors || battery.validation_errors || [],
         status44: status44View(battery.status44)
     }

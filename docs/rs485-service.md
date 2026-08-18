@@ -25,19 +25,21 @@ or controller behavior.
 
 CID2 `0x42` remains the source for each battery's logical cell vector and
 per-battery extrema. When a pack reports 15 cells, cell 16 is reconstructed
-per battery from that battery's **own** pack voltage: `V16 = Vpack - sum(cells
-1..15)`. Because the pack voltage has about 10 mV resolution, the reconstruction
-is treated as a quantized constraint window (`Vpack ± 0.005 V - sum15`). A
-per-battery predictor advances cell 16 by the median movement of the reported
-cells and clamps it into that window; the first sample is seeded with the
-median reported cell voltage. Estimator state is kept separately per battery
-and is reset after a communication loss, invalid telemetry, or a pack-voltage
-jump larger than 0.5 V (battery restart). Only the clamped estimate drives
-Vmin/Vmax/spread and balancing detection; the raw subtraction result is never
-used for the 30 mV threshold. Cell 16 is explicitly marked `calculated` /
-`reconstructed`, and internal floating-point precision is preserved (rounding
-happens only in the UI). CID2 `0x44` is status-only and is never used as a
-cell-voltage source.
+independently for that battery. Cells 1-15 are sorted, the three lowest and
+three highest are discarded, and the remaining nine form a trimmed common
+voltage. The same battery's `Vpack - sum(cells 1..15)` is retained as a noisy
+raw observation of cell 16, never as an instantaneous hard constraint.
+
+A five-sample median of the raw offset from the common voltage slowly corrects
+a filtered per-battery offset with gain 0.15 and a correction limited to 20 mV
+per update. Five consecutive same-sign errors above 10 mV temporarily select
+gain 0.30. The candidate is finally constrained to fresh CID2 `0x61` global
+cell limits; when the packed extrema ID identifies cell 16, the exact reported
+extremum is used. The constrained result drives Vmin/Vmax/spread and balancing.
+Estimator state is never shared between batteries and expires after 20 seconds,
+confirmed removal, invalid telemetry, or a pack-voltage jump above 0.5 V.
+Cell 16 remains explicitly marked `calculated` / `reconstructed`. CID2 `0x44`
+is status-only and is never used as a cell-voltage source.
 
 The CID2 `0x63` status byte is decoded and retained as `limits.statusFlags`.
 The correct Pylon/Dyness meanings are: bit 7 charge enabled, bit 6 discharge
