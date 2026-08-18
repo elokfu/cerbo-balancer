@@ -838,6 +838,15 @@ def _median(values: list[float]) -> float:
     return (ordered[middle - 1] + ordered[middle]) / 2.0
 
 
+def soc61_is_valid(soc61: Any) -> bool:
+    """A CID2=61 SOC is publishable only as a whole percentage 0..100.
+
+    An absent or invalid SOC must never be coerced to 0%: that would make the
+    selected battery look empty and trigger empty-battery protection.
+    """
+    return isinstance(soc61, int) and not isinstance(soc61, bool) and 0 <= soc61 <= 100
+
+
 class Cell16Estimator:
     """Per-battery cell-16 reconstruction with pack-voltage quantization.
 
@@ -1521,7 +1530,6 @@ class DbusPublisher:
                 "/ProductName": dbus.String("Dyness RS485 virtual BMS"),
                 "/Mgmt/Connection": dbus.String("Dyness RS485"),
                 "/FirmwareVersion": dbus.String("0.1.0"),
-                "/Soc": dbus.Double(0.0),
                 "/Dc/0/Voltage": dbus.Double(53.0),
                 "/Dc/0/Current": dbus.Double(0.0),
                 "/Dc/0/Power": dbus.Double(0.0),
@@ -1621,8 +1629,8 @@ class DbusPublisher:
         active_instance = selection.get("activeBmsInstance")
         active_instance = active_instance if isinstance(active_instance, int) else -1
         state_text = virtual_bms_state(control, selection)
+        soc61 = system.get("soc61")
         values = {
-            "/Soc": dbus.Double(float(system.get("soc61") or 0.0)),
             "/Dc/0/Voltage": dbus.Double(float(voltage or 53.0)),
             "/Dc/0/Current": dbus.Double(float(current or 0.0)),
             "/Dc/0/Power": dbus.Double(float((voltage or 53.0) * (current or 0.0))),
@@ -1659,16 +1667,29 @@ class DbusPublisher:
             "/Control/AuthorityState": dbus.String(str(control.get("authorityState") or "UNKNOWN")),
             "/Control/ControllerRequestApplied": dbus.Boolean(bool(control.get("controllerRequestApplied"))),
         }
+        # SOC is published only from a valid addressed CID2=61 value.  A 0%
+        # SOC is never published while telemetry is unavailable: an absent
+        # /Soc path makes the system fall back to voltage-based SOC instead of
+        # triggering empty-battery protection, and during invalid windows the
+        # last-known-good SOC stays in place.
+        if soc61_is_valid(soc61):
+            values["/Soc"] = dbus.Double(float(soc61))
         changed = dbus.Dictionary({}, signature="sa{sv}")
         for path, value in values.items():
-            if path in self.objects:
-                item = self.objects[path]
-                if item.value != value:
-                    item.value = value
-                    changed[path] = dbus.Dictionary(
-                        {"Value": value, "Text": dbus.String(str(value))},
-                        signature="sv",
-                    )
+            item = self.objects.get(path)
+            if item is None:
+                item = Item(self.bus, path, value)
+                self.objects[path] = item
+                changed[path] = dbus.Dictionary(
+                    {"Value": value, "Text": dbus.String(str(value))},
+                    signature="sv",
+                )
+            elif item.value != value:
+                item.value = value
+                changed[path] = dbus.Dictionary(
+                    {"Value": value, "Text": dbus.String(str(value))},
+                    signature="sv",
+                )
         if changed:
             self.root.ItemsChanged(changed)
 

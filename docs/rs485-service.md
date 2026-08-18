@@ -93,6 +93,14 @@ service is separately selected as the active battery monitor, GX displays:
 - `/Dc/0/Current` as the complete sum of valid CID2 `0x42` battery currents;
 - `/Dc/0/Power` as voltage multiplied by summed current.
 
+`/Soc` is published only when a valid whole-number CID2 `0x61` SOC is present.
+A 0% SOC is never coerced from an absent or invalid value: while the SOC is
+unavailable, the path is not published (so the system falls back to
+voltage-based SOC instead of triggering empty-battery protection), and during
+transient invalid windows the last-known-good SOC remains in place. This keeps
+service restarts and serial interruptions from momentarily presenting an empty
+battery to the system.
+
 The service also publishes the final virtual-BMS arbitration result through
 the standard `/Info/MaxChargeVoltage`, `/Info/MaxChargeCurrent`,
 `/Info/MaxDischargeCurrent`, `/Bms/AllowToCharge`, and

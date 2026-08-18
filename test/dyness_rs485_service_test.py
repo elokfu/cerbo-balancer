@@ -18,6 +18,7 @@ from dyness_rs485_service import (  # noqa: E402
     ReadOnlyPoller,
     charge_control_settings,
     effective_control,
+    soc61_is_valid,
 )
 from dyness_rs485_protocol import checksum, length_field  # noqa: E402
 
@@ -987,6 +988,16 @@ class Cell16EstimatorTests(unittest.TestCase):
         self.assertEqual(battery["vmax"], 3.30)
         self.assertEqual(battery["spread"], 0.0)
         self.assertEqual(battery["controllerExtremaSource"], "CID2_42_CELL_ARRAY")
+
+
+class SocPublishTests(unittest.TestCase):
+    def test_valid_integer_soc_is_publishable(self):
+        for value in (0, 1, 50, 99, 100):
+            self.assertTrue(soc61_is_valid(value), value)
+
+    def test_invalid_or_absent_soc_is_never_coerced_to_zero(self):
+        for value in (None, -1, 101, 50.0, "50", True, False):
+            self.assertFalse(soc61_is_valid(value), repr(value))
 
 
 if __name__ == "__main__":
