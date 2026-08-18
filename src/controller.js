@@ -658,6 +658,7 @@ function createBalancerController (options = {}) {
     const selected = batteryByAddress(state.selectedAddress)
     const excludedBatteries = batteries().filter(battery => !eligible(battery)).map(battery => ({
       address: battery.address,
+      isMaster: battery.address === 2,
       mosfetOn: chargeMosfetOn(battery),
       protected: localProtection(battery),
       system61Valid: battery.system61Valid === true,
