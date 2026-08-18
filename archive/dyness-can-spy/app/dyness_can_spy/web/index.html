@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Dyness CAN Spy</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header><div><h1>Dyness CAN Spy</h1><p>Receive-only CAN and RS485 correlation</p></div><span id="state" class="badge">Loading</span></header>
+  <main>
+    <section>
+      <h2>Capture</h2>
+      <div class="controls"><input id="notes" placeholder="Session notes"><button id="start">Start capture</button><button id="stop" class="secondary">Stop</button><button id="preflight" class="secondary">Preflight</button></div>
+      <pre id="health">Waiting for status…</pre>
+    </section>
+    <section>
+      <h2>RS485 cells</h2>
+      <div id="cells" class="cells"></div>
+    </section>
+    <section>
+      <h2>Live CAN identifiers</h2>
+      <div class="table-wrap"><table><thead><tr><th>ID</th><th>Direction</th><th>Fmt</th><th>DLC</th><th>Payload</th><th>Changed</th><th>Frames</th><th>Hz</th></tr></thead><tbody id="frames"></tbody></table></div>
+    </section>
+    <section>
+      <h2>Evidence sessions</h2>
+      <div class="table-wrap"><table><thead><tr><th>Session</th><th>Source</th><th>Status</th><th>Frames</th><th>Samples</th><th>Actions</th></tr></thead><tbody id="sessions"></tbody></table></div>
+    </section>
+    <section>
+      <h2>Ranked cell-voltage candidates</h2>
+      <p>Cell 7 is highlighted as the experimental tracer. Select a candidate to compare its time series.</p>
+      <div class="table-wrap"><table><thead><tr><th>Cell</th><th>Rank</th><th>CAN ID</th><th>Direction</th><th>Offset</th><th>Encoding</th><th>r</th><th>RMSE</th><th>Lag</th><th>Score</th><th>Verdict</th></tr></thead><tbody id="candidates"></tbody></table></div>
+      <canvas id="chart" width="1000" height="300"></canvas>
+    </section>
+  </main>
+  <div id="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>

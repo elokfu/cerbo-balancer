@@ -1,0 +1,17 @@
+cell_index,rank,can_id,is_extended,byte_offset,endian,scale_mv,sample_count,coverage,correlation,rmse_mv,median_error_mv,movement_agreement,lag_s,score,verdict,detail
+1,1,,,,,,0,,,,,,,,inconclusive,voltage movement 4.00 mV is below 10.00 mV
+2,1,,,,,,0,,,,,,,,inconclusive,voltage movement 4.00 mV is below 10.00 mV
+3,1,,,,,,0,,,,,,,,inconclusive,voltage movement 4.00 mV is below 10.00 mV
+4,1,,,,,,0,,,,,,,,inconclusive,voltage movement 4.00 mV is below 10.00 mV
+5,1,,,,,,0,,,,,,,,inconclusive,voltage movement 5.00 mV is below 10.00 mV
+6,1,,,,,,0,,,,,,,,inconclusive,voltage movement 4.00 mV is below 10.00 mV
+7,1,,,,,,0,,,,,,,,inconclusive,voltage movement 4.00 mV is below 10.00 mV
+8,1,,,,,,0,,,,,,,,inconclusive,voltage movement 4.00 mV is below 10.00 mV
+9,1,,,,,,0,,,,,,,,inconclusive,voltage movement 4.00 mV is below 10.00 mV
+10,1,,,,,,0,,,,,,,,inconclusive,voltage movement 4.00 mV is below 10.00 mV
+11,1,,,,,,0,,,,,,,,inconclusive,voltage movement 2.00 mV is below 10.00 mV
+12,1,,,,,,0,,,,,,,,inconclusive,voltage movement 4.00 mV is below 10.00 mV
+13,1,,,,,,0,,,,,,,,inconclusive,voltage movement 4.00 mV is below 10.00 mV
+14,1,,,,,,0,,,,,,,,inconclusive,voltage movement 3.00 mV is below 10.00 mV
+15,1,,,,,,0,,,,,,,,inconclusive,voltage movement 4.00 mV is below 10.00 mV
+16,1,,,,,,0,,,,,,,,inconclusive,voltage movement 9.00 mV is below 10.00 mV

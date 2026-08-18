@@ -1,0 +1,12 @@
+# dyness-can-spy
+[ -e /service/dyness-can-spy ] || ln -s /data/dyness-can-spy/service /service/dyness-can-spy
+
+# Dyness RS485 balancer persistent service
+BALANCER_SERVICE_DIR=/var/volatile/services/cerbo-balancer-rs485
+BALANCER_RUN=/data/home/nodered/cerbo-balancer/cerbo-balancer-rs485.run
+if [ -x "$BALANCER_RUN" ]; then
+    mkdir -p "$BALANCER_SERVICE_DIR"
+    cp "$BALANCER_RUN" "$BALANCER_SERVICE_DIR/run"
+    chmod 0755 "$BALANCER_SERVICE_DIR/run"
+    ln -sfn "$BALANCER_SERVICE_DIR" /service/cerbo-balancer-rs485
+fi

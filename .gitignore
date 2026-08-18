@@ -4,3 +4,12 @@ coverage/
 dist/
 backups/
 __pycache__/
+
+# Live runtime state (regenerated on the Cerbo; never committed)
+cerbo-balancer-state*.json
+cerbo-balancer-config*.json
+cerbo-balancer-latest.json
+cerbo-balancer-command.json
+cerbo-balancer-rs485-inventory.json
+cerbo-balancer-csv-logging.json
+cerbo-balancer-*.jsonl

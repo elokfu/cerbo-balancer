@@ -1,0 +1,3 @@
+#!/bin/sh
+exec 2>&1
+PYTHONPATH=/data/dyness-can-spy/app exec python3 -m dyness_can_spy --config /data/dyness-can-spy/config.ini serve
