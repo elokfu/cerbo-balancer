@@ -209,14 +209,17 @@ def main() -> int:
     parser.add_argument("--state", default=DEFAULT_STATE)
     parser.add_argument("--interval", type=float, default=1.0)
     parser.add_argument("--once", action="store_true")
+    parser.add_argument("--service-name", default=GUARDIAN_BATTERY_SERVICE)
+    parser.add_argument("--device-instance", type=int, default=101)
+    parser.add_argument("--product-name", default="Dyness RS485 BMS guardian")
     args = parser.parse_args()
 
     store = GuardianStateStore(args.state)
     controller = GuardianController(store.load())
     publisher = DbusPublisher(
-        service_name=GUARDIAN_BATTERY_SERVICE,
-        device_instance=101,
-        product_name="Dyness RS485 BMS guardian",
+        service_name=args.service_name,
+        device_instance=args.device_instance,
+        product_name=args.product_name,
         guardian=True,
     )
     source = Path(args.source)
