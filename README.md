@@ -124,8 +124,6 @@ Captured live deployment artifacts are kept in this repository:
   the persistent RS485 balancer service).
 - `deploy/cerbo-rc.local.bak-before-spy-removal-20260818` — the pre-removal
   boot config including the former `dyness-can-spy` registration.
-- `docs/D0080en.pdf` — Dyness D0080 battery manual used as a protocol
-  reference.
 - `scripts/dyness_pylon_cells.py` — read-only Dyness/Pylon RS485 cell probe.
 - `docs/reference/dyness_rs485_service.py.before-master-only-61-20260817-070515`
   — the service as it was before the master-only CID2 0x61 change.
