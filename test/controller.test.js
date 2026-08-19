@@ -72,6 +72,8 @@ assert.equal(validateConfig({ feedForwardAlpha: 1.1 }).valid, false)
 assert.equal(validateConfig({ feedForwardGain: -0.1 }).valid, false)
 assert.equal(validateConfig({ feedForwardGain: 0 }).valid, true)
 assert.equal(validateConfig({ solarDetectionSamples: 3.5 }).valid, false)
+assert.equal(validateConfig({ floatCellVoltageThreshold: 2.999 }).valid, false)
+assert.equal(validateConfig({ floatCellVoltageThreshold: 3.501 }).valid, true)
 
 const normal = createBalancerController({ now: () => clock })
 normal.handle({ type: 'telemetry', telemetry: telemetry(), timestamp: clock })
@@ -314,24 +316,50 @@ for (let index = 0; index < 8; index++) sample(bypassDerating, [battery(2)], { s
 assert.equal(bypassDerating.getState().state, STATES.BALANCING)
 assert.equal(command(bypassDerating.handle({ type: 'tick', timestamp: clock })).requestedCurrent, DEFAULT_CONFIG.feedForwardFallbackCurrent)
 
-// Float learning freezes the first eight-sample mean, survives low Vmax, and resets at SOC 98.
+// Float learning centers nine samples around the first 3.500 V crossing.
 const floatController = createRawController({ now: () => clock })
-for (let index = 0; index < 8; index++) sample(floatController, [battery(2, { spread: 0.020 })], {
-  system: { soc61: 99, voltage61: 54 + index * 0.1, maximumCellVoltage61: 3.5 }
+// The fifth low sample evicts the oldest value from the four-slot ring.
+for (let index = 0; index < 5; index++) sample(floatController, [battery(2, { spread: 0.020 })], {
+  system: { soc61: 99, voltage61: 53.9 + index * 0.1, maximumCellVoltage61: 3.49 }
 })
+sample(floatController, [battery(2, { spread: 0.020 })], { system: { soc61: 99, voltage61: 54.4, maximumCellVoltage61: 3.5 } })
+for (let index = 0; index < 3; index++) sample(floatController, [battery(2, { spread: 0.020 })], {
+  system: { soc61: 99, voltage61: 54.5 + index * 0.1, maximumCellVoltage61: 3.5 }
+})
+assert.equal(floatController.getStatus().floatControl.samples, 8)
+assert.equal(floatController.getStatus().floatControl.qualified, false)
+const duplicateProgress = floatController.getStatus().floatControl.samples
+floatController.handle({ type: 'tick', timestamp: clock })
+assert.equal(floatController.getStatus().floatControl.samples, duplicateProgress)
+sample(floatController, [battery(2, { spread: 0.020 })], { system: { soc61: 99, voltage61: 60, maximumCellVoltage61: 3.49 } })
+assert.equal(floatController.getStatus().floatControl.phase, 'PAUSED_BELOW_THRESHOLD')
+assert.equal(floatController.getStatus().floatControl.samples, 8)
+sample(floatController, [battery(2, { spread: 0.020 })], { system: { soc61: 99, voltage61: 54.8, maximumCellVoltage61: 3.5 } })
 assert.equal(floatController.getStatus().floatControl.qualified, true)
-assert.ok(Math.abs(floatController.getStatus().floatControl.voltage - 54.35) < 1e-9)
+assert.equal(floatController.getStatus().floatControl.phase, 'QUALIFIED')
+assert.ok(Math.abs(floatController.getStatus().floatControl.voltage - 54.4) < 1e-9)
 sample(floatController, [battery(2, { spread: 0.020 })], { system: { soc61: 99, voltage61: 56, maximumCellVoltage61: 3.49 } })
-assert.ok(Math.abs(floatController.getStatus().floatControl.voltage - 54.35) < 1e-9)
+assert.ok(Math.abs(floatController.getStatus().floatControl.voltage - 54.4) < 1e-9)
 sample(floatController, [battery(2, { spread: 0.020 })], { system: { soc61: 98, voltage61: 54, maximumCellVoltage61: 3.49 } })
 assert.equal(floatController.getStatus().floatControl.voltage, 56.5)
 assert.equal(floatController.getStatus().floatControl.qualified, false)
+assert.equal(floatController.getStatus().floatControl.samples, 0)
+
+// A crossing without four prior samples is ignored and must be re-armed.
+const shortFloat = createRawController({ now: () => clock })
+for (let index = 0; index < 2; index++) sample(shortFloat, [battery(2)], { system: { soc61: 99, voltage61: 54, maximumCellVoltage61: 3.49 } })
+sample(shortFloat, [battery(2)], { system: { soc61: 99, voltage61: 54.2, maximumCellVoltage61: 3.5 } })
+assert.equal(shortFloat.getStatus().floatControl.samples, 0)
+for (let index = 0; index < 4; index++) sample(shortFloat, [battery(2)], { system: { soc61: 99, voltage61: 54 + index * 0.1, maximumCellVoltage61: 3.49 } })
+sample(shortFloat, [battery(2)], { system: { soc61: 99, voltage61: 54.4, maximumCellVoltage61: 3.5 } })
+assert.equal(shortFloat.getStatus().floatControl.samples, 5)
+sample(shortFloat, [battery(2)], { valid: false, system: { soc61: 99, voltage61: 54.5, maximumCellVoltage61: 3.5 } })
+assert.equal(shortFloat.getStatus().floatControl.samples, 0)
 
 // A qualified float survives persistence and is activated by full-SOC completion.
 const activeFloat = createRawController({ now: () => clock })
-for (let index = 0; index < 8; index++) sample(activeFloat, [battery(2)], {
-  system: { soc61: 99, voltage61: 54 + index * 0.1, maximumCellVoltage61: 3.5 }
-})
+for (let index = 0; index < 4; index++) sample(activeFloat, [battery(2)], { system: { soc61: 99, voltage61: 54 + index * 0.1, maximumCellVoltage61: 3.49 } })
+for (let index = 4; index < 9; index++) sample(activeFloat, [battery(2)], { system: { soc61: 99, voltage61: 54 + index * 0.1, maximumCellVoltage61: 3.5 } })
 const fullFloatActions = sample(activeFloat, [battery(2, { soc: 100, socCapacityIntegerPercent: 100 })], {
   system: { soc61: 100, voltage61: 55, maximumCellVoltage61: 3.5 },
   limits: { chargeVoltage: 55.2, chargeCurrent: 0, statusFlags: { chargeEnabled: false, dischargeEnabled: true } },
@@ -339,14 +367,14 @@ const fullFloatActions = sample(activeFloat, [battery(2, { soc: 100, socCapacity
 })
 assert.equal(activeFloat.getState().completionLatched, true)
 assert.equal(activeFloat.getStatus().floatControl.active, true)
-assert.ok(Math.abs(command(fullFloatActions).requestedVoltage - 54.35) < 1e-9)
+assert.ok(Math.abs(command(fullFloatActions).requestedVoltage - 54.4) < 1e-9)
 
 const persistedFloat = activeFloat.getState()
 const restoredFloat = createRawController({ now: () => clock })
 restoredFloat.handle({ type: 'load', state: persistedFloat, config: activeFloat.getConfig(), timestamp: clock })
 assert.equal(restoredFloat.getState().floatQualified, true)
-assert.ok(Math.abs(restoredFloat.getState().floatVoltage - 54.35) < 1e-9)
-assert.equal(restoredFloat.getStatus().floatControl.samples, DEFAULT_CONFIG.qualificationSamples)
+assert.ok(Math.abs(restoredFloat.getState().floatVoltage - 54.4) < 1e-9)
+assert.equal(restoredFloat.getStatus().floatControl.samples, 9)
 
 const migratedFloat = createRawController({ now: () => clock })
 migratedFloat.handle({ type: 'load', state: { version: 5, state: STATES.NORMAL, floatQualified: true, floatVoltage: 54.1 }, config: {}, timestamp: clock })

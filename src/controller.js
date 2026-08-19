@@ -6,10 +6,12 @@ const STATES = Object.freeze({
   SAFETY_STOP: 'SAFETY_STOP'
 })
 
-const CONTROLLER_VERSION = 7
+const CONTROLLER_VERSION = 8
 
-const FLOAT_CELL_THRESHOLD = 3.5
 const FLOAT_DEFAULT_VOLTAGE = 56.5
+const FLOAT_PRE_TRIGGER_SAMPLES = 4
+const FLOAT_POST_TRIGGER_SAMPLES = 4
+const FLOAT_WINDOW_SAMPLES = FLOAT_PRE_TRIGGER_SAMPLES + 1 + FLOAT_POST_TRIGGER_SAMPLES
 const BALANCE_EXIT_CURRENT_THRESHOLD = 1.5
 
 const DEFAULT_CONFIG = Object.freeze({
@@ -17,6 +19,7 @@ const DEFAULT_CONFIG = Object.freeze({
   balancingVoltageCeiling: 56.5,
   safetyFallbackVoltage: 55.0,
   safetyFallbackCurrent: 10.0,
+  floatCellVoltageThreshold: 3.5,
   balancerSpreadThreshold: 0.030,
   balanceBatteryCurrentTarget: 2.0,
   currentTargetTolerance: 0.25,
@@ -69,6 +72,11 @@ function emptyState () {
     floatQualifiedAt: null,
     floatSampleCount: 0,
     floatVoltageSum: 0,
+    floatPhase: 'PRETRIGGER',
+    floatPreTriggerVoltages: [],
+    floatWindowVoltages: [],
+    floatCrossingAt: null,
+    floatWasBelowThreshold: false,
     lastControlSampleTimestamp: null,
     lastTransitionAt: null,
     lastStopReason: null,
@@ -88,7 +96,7 @@ function validateConfig (candidate = {}) {
   const errors = []
   const positive = [
     'balancingVoltageCeiling', 'safetyFallbackVoltage',
-    'safetyFallbackCurrent', 'balancerSpreadThreshold', 'balanceBatteryCurrentTarget',
+    'safetyFallbackCurrent', 'floatCellVoltageThreshold', 'balancerSpreadThreshold', 'balanceBatteryCurrentTarget',
     'currentTargetTolerance', 'feedForwardAlpha', 'shareMinimumSelectedCurrent',
     'shareMinimumTotalCurrent', 'feedForwardFallbackCurrent', 'kp', 'ki',
     'maxIntegralTerm', 'aggregateCurrentMaximum', 'currentIncreaseRatePerMin',
@@ -103,6 +111,9 @@ function validateConfig (candidate = {}) {
   }
   if (!(config.aggregateCurrentMinimum <= config.aggregateCurrentMaximum)) {
     errors.push('aggregate current bounds are invalid')
+  }
+  if (!(config.floatCellVoltageThreshold >= 3.0 && config.floatCellVoltageThreshold <= 3.65)) {
+    errors.push('floatCellVoltageThreshold must be between 3.000 and 3.650 V')
   }
   if (typeof config.perBatteryCapacitySocControlEnabled !== 'boolean') errors.push('perBatteryCapacitySocControlEnabled must be boolean')
   if (!(config.feedForwardAlpha > 0 && config.feedForwardAlpha <= 1)) {
@@ -174,7 +185,7 @@ function createBalancerController (options = {}) {
       migrated.automaticBalancingEnabled = persisted.enabled
     }
     migrated.csvLogging = persisted.csvLogging || migrated.csvLogging
-    const compatibleVersions = [3, 4, 5, 6, CONTROLLER_VERSION]
+    const compatibleVersions = [3, 4, 5, 6, 7, CONTROLLER_VERSION]
     migrated.completionLatched = compatibleVersions.includes(persisted.version) && persisted.completionLatched === true
     migrated.permissionOffSeen = compatibleVersions.includes(persisted.version) && persisted.permissionOffSeen === true
     if (compatibleVersions.includes(persisted.version) && Object.values(STATES).includes(persisted.state)) {
@@ -186,12 +197,18 @@ function createBalancerController (options = {}) {
       migrated.lastQualificationTelemetryTimestamp = null
       migrated.floatSampleCount = 0
       migrated.floatVoltageSum = 0
+      migrated.floatPreTriggerVoltages = []
+      migrated.floatWindowVoltages = []
+      migrated.floatCrossingAt = migrated.floatQualified && finite(migrated.floatCrossingAt) ? migrated.floatCrossingAt : null
+      migrated.floatWasBelowThreshold = false
       if (!finite(migrated.floatVoltage) || migrated.floatVoltage <= 0) migrated.floatVoltage = FLOAT_DEFAULT_VOLTAGE
       if (persisted.version !== CONTROLLER_VERSION) {
         migrated.floatVoltage = FLOAT_DEFAULT_VOLTAGE
         migrated.floatQualified = false
         migrated.floatQualifiedAt = null
       }
+      migrated.floatPhase = migrated.floatQualified ? 'QUALIFIED' : 'PRETRIGGER'
+      if (!migrated.floatQualified) migrated.floatCrossingAt = null
       if (typeof persisted.automaticBalancingEnabled !== 'boolean' && typeof enabled === 'boolean') {
         migrated.automaticBalancingEnabled = enabled
       }
@@ -321,8 +338,17 @@ function createBalancerController (options = {}) {
   function resetIncompleteQualifications () {
     state.entryQualificationSamples = {}
     state.exitQualificationSamples = 0
+    if (!state.floatQualified) resetFloatAcquisition()
+  }
+
+  function resetFloatAcquisition () {
     state.floatSampleCount = 0
     state.floatVoltageSum = 0
+    state.floatPhase = 'PRETRIGGER'
+    state.floatPreTriggerVoltages = []
+    state.floatWindowVoltages = []
+    state.floatCrossingAt = null
+    state.floatWasBelowThreshold = false
   }
 
   function updateFloatVoltageSample (timestamp) {
@@ -332,25 +358,60 @@ function createBalancerController (options = {}) {
       state.floatVoltage = FLOAT_DEFAULT_VOLTAGE
       state.floatQualified = false
       state.floatQualifiedAt = null
-      state.floatSampleCount = 0
-      state.floatVoltageSum = 0
+      resetFloatAcquisition()
       return
     }
-    if (state.floatQualified) return
-    if (!finite(system.maximumCellVoltage61) || !finite(system.voltage61) || system.maximumCellVoltage61 < FLOAT_CELL_THRESHOLD) {
-      state.floatSampleCount = 0
-      state.floatVoltageSum = 0
+    if (state.floatQualified) {
+      state.floatPhase = 'QUALIFIED'
       return
     }
-    state.floatSampleCount += 1
-    state.floatVoltageSum += system.voltage61
-    if (state.floatSampleCount >= config.qualificationSamples) {
-      state.floatVoltage = state.floatVoltageSum / state.floatSampleCount
+    if (!finite(system.maximumCellVoltage61) || !finite(system.voltage61)) {
+      resetFloatAcquisition()
+      return
+    }
+
+    const aboveThreshold = system.maximumCellVoltage61 >= config.floatCellVoltageThreshold
+    const triggered = state.floatWindowVoltages.length >= FLOAT_PRE_TRIGGER_SAMPLES + 1
+    if (!aboveThreshold) {
+      if (triggered) {
+        state.floatPhase = 'PAUSED_BELOW_THRESHOLD'
+        return
+      }
+      state.floatPreTriggerVoltages.push(system.voltage61)
+      if (state.floatPreTriggerVoltages.length > FLOAT_PRE_TRIGGER_SAMPLES) state.floatPreTriggerVoltages.shift()
+      state.floatWasBelowThreshold = true
+      state.floatPhase = 'PRETRIGGER'
+      state.floatSampleCount = state.floatPreTriggerVoltages.length
+      state.floatVoltageSum = state.floatPreTriggerVoltages.reduce((sum, value) => sum + value, 0)
+      return
+    }
+
+    if (!triggered) {
+      if (!state.floatWasBelowThreshold || state.floatPreTriggerVoltages.length !== FLOAT_PRE_TRIGGER_SAMPLES) {
+        resetFloatAcquisition()
+        return
+      }
+      state.floatWindowVoltages = [...state.floatPreTriggerVoltages, system.voltage61]
+      state.floatPreTriggerVoltages = []
+      state.floatCrossingAt = timestamp
+      state.floatWasBelowThreshold = false
+    } else {
+      state.floatWindowVoltages.push(system.voltage61)
+    }
+
+    state.floatPhase = 'POST_TRIGGER'
+    state.floatSampleCount = state.floatWindowVoltages.length
+    state.floatVoltageSum = state.floatWindowVoltages.reduce((sum, value) => sum + value, 0)
+    if (state.floatWindowVoltages.length >= FLOAT_WINDOW_SAMPLES) {
+      state.floatVoltage = state.floatVoltageSum / FLOAT_WINDOW_SAMPLES
       state.floatQualified = true
       state.floatQualifiedAt = timestamp
-      record(timestamp, 'FLOAT_VOLTAGE_QUALIFIED', 'pack-voltage average frozen after qualified high-cell samples', {
+      state.floatPhase = 'QUALIFIED'
+      record(timestamp, 'FLOAT_VOLTAGE_QUALIFIED', `pack-voltage average frozen around the first ${config.floatCellVoltageThreshold.toFixed(3)} V crossing`, {
         floatVoltage: state.floatVoltage,
-        samples: state.floatSampleCount
+        samples: FLOAT_WINDOW_SAMPLES,
+        crossingAt: state.floatCrossingAt,
+        maximumCellThreshold: config.floatCellVoltageThreshold
       })
     }
   }
@@ -721,9 +782,13 @@ function createBalancerController (options = {}) {
         voltage: state.floatVoltage,
         qualified: state.floatQualified,
         qualifiedAt: state.floatQualifiedAt,
-        samples: state.floatQualified ? config.qualificationSamples : state.floatSampleCount,
-        required: config.qualificationSamples,
-        maximumCellThreshold: FLOAT_CELL_THRESHOLD,
+        phase: state.floatPhase,
+        samples: state.floatQualified ? FLOAT_WINDOW_SAMPLES : state.floatWindowVoltages.length || state.floatPreTriggerVoltages.length,
+        required: FLOAT_WINDOW_SAMPLES,
+        preSamples: state.floatQualified || state.floatWindowVoltages.length ? FLOAT_PRE_TRIGGER_SAMPLES : state.floatPreTriggerVoltages.length,
+        postSamples: state.floatQualified ? FLOAT_POST_TRIGGER_SAMPLES : Math.max(0, state.floatWindowVoltages.length - FLOAT_PRE_TRIGGER_SAMPLES - 1),
+        crossingAt: state.floatCrossingAt,
+        maximumCellThreshold: config.floatCellVoltageThreshold,
         active: floatCvlActive()
       },
       permissionOffSeen: state.permissionOffSeen,
@@ -742,7 +807,7 @@ function createBalancerController (options = {}) {
     const timestamp = finite(message.timestamp) ? message.timestamp : now()
     if (message.type === 'load') {
       const persistedVersion = message.state && message.state.version
-      const currentVersion = [3, 4, 5, 6, CONTROLLER_VERSION].includes(persistedVersion)
+      const currentVersion = [3, 4, 5, 6, 7, CONTROLLER_VERSION].includes(persistedVersion)
       state = migrateState(message.state || {})
       const candidateConfig = currentVersion ? { ...(message.config || {}) } : {}
       if (persistedVersion !== CONTROLLER_VERSION && candidateConfig.ki === 0.002) candidateConfig.ki = DEFAULT_CONFIG.ki
@@ -798,6 +863,7 @@ function createBalancerController (options = {}) {
       state.floatVoltage = FLOAT_DEFAULT_VOLTAGE
       state.floatQualified = false
       state.floatQualifiedAt = null
+      resetFloatAcquisition()
       resetControl()
       releaseSelection()
       transition(STATES.NORMAL, timestamp, 'controller defaults restored')
@@ -808,7 +874,19 @@ function createBalancerController (options = {}) {
       const validated = validateConfig(message.config)
       const requestId = message.requestId == null ? null : String(message.requestId)
       configurationResult = { requestId, accepted: validated.valid, errors: validated.errors.slice() }
-      if (validated.valid) config = validated.config
+      if (validated.valid) {
+        const floatThresholdChanged = validated.config.floatCellVoltageThreshold !== config.floatCellVoltageThreshold
+        config = validated.config
+        if (floatThresholdChanged) {
+          state.floatVoltage = FLOAT_DEFAULT_VOLTAGE
+          state.floatQualified = false
+          state.floatQualifiedAt = null
+          resetFloatAcquisition()
+          record(timestamp, 'FLOAT_THRESHOLD_CHANGED', 'dynamic-float learning reset for a new cell-voltage threshold', {
+            maximumCellThreshold: config.floatCellVoltageThreshold
+          })
+        }
+      }
       else record(timestamp, 'config_rejected', validated.errors.join('; '))
       return evaluate(timestamp)
     }
