@@ -152,6 +152,14 @@ python docs/pdf/generate_dyness_balancer_pdf.py
 The generator uses vector ReportLab diagrams and writes the stable output name
 under `output/pdf/`.
 
+## Related Dyness BMS research
+
+The experimental characterization underlying the measured Dyness thresholds
+and balancing behavior is available as the
+[Dyness BMS balancing algorithm and charge-control research PDF](https://elokfu.github.io/dyness-bms-behaviour/assets/Dyness_BMS_Balancing_Algorithm_Charge_Control_Firmware_2.50-71.10.11.pdf).
+The citable publication record is available under
+[DOI 10.5281/zenodo.21860970](https://doi.org/10.5281/zenodo.21860970).
+
 ## GitHub Pages publishing
 
 The search-optimized project page is [`docs/index.html`](docs/index.html).
