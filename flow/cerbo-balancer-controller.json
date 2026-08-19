@@ -502,8 +502,7 @@
         "bal-controls"
       ],
       [
-        "bal-command-log",
-        "bal-events-log"
+        "bal-command-log"
       ],
       [
         "bal-config-snapshot"
@@ -546,23 +545,6 @@
     "encoding": "none",
     "x": 1010,
     "y": 840,
-    "wires": [
-      []
-    ]
-  },
-  {
-    "id": "bal-events-log",
-    "type": "file",
-    "z": "bal-tab",
-    "name": "Controller events",
-    "filename": "/data/home/nodered/cerbo-balancer-events.jsonl",
-    "filenameType": "str",
-    "appendNewline": true,
-    "createDir": true,
-    "overwriteFile": "false",
-    "encoding": "none",
-    "x": 1010,
-    "y": 870,
     "wires": [
       []
     ]
@@ -1059,5 +1041,49 @@
     "x": 1220,
     "y": 1140,
     "wires": []
+  },
+  {
+    "id": "bal-runtime-cap-refresh",
+    "type": "inject",
+    "z": "bal-tab",
+    "name": "Cap runtime persistence",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "86400",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "5",
+    "topic": "",
+    "payload": "",
+    "payloadType": "str",
+    "x": 190,
+    "y": 1200,
+    "wires": [
+      [
+        "bal-runtime-cap"
+      ]
+    ]
+  },
+  {
+    "id": "bal-runtime-cap",
+    "type": "exec",
+    "z": "bal-tab",
+    "command": "sh /data/home/nodered/cerbo-balancer/cap_runtime_files.sh",
+    "addpay": false,
+    "append": "",
+    "useSpawn": "false",
+    "timer": "30",
+    "winHide": false,
+    "name": "Compact bounded runtime files",
+    "x": 480,
+    "y": 1200,
+    "wires": [
+      [],
+      [],
+      []
+    ]
   }
 ]

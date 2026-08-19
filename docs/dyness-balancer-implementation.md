@@ -582,6 +582,25 @@ with a validated backup.
 
 ## 11. Persistence, dashboards, and CSV
 
+Runtime persistence is bounded independently of manually managed CSV sessions.
+At Node-RED startup and once every 24 hours, Node-RED invokes
+`cap_runtime_files.sh`, which atomically
+compacts only files exceeding their limits and preserves the newest complete
+JSONL records. It aborts a compaction when a concurrent append is detected.
+
+| Runtime file | Trigger size | Retained after compaction |
+| --- | ---: | ---: |
+| Controller state | 512 KiB | 384 KiB |
+| Configuration history | 128 KiB | 96 KiB |
+
+CSV sessions are not automatically removed. The operator downloads or deletes
+them from the maintenance page. Node-RED, RS485-worker, and guardian supervisor
+logs use `multilog` with four 25 KiB rotated segments per service.
+The former `cerbo-balancer-events.jsonl` writer was removed because it duplicated
+every controller command rather than recording transitions; recent controller
+events remain available through bounded persisted controller state and the
+management dashboard.
+
 Important runtime paths are:
 
 ```text

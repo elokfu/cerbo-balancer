@@ -24,10 +24,26 @@
     "layout": "grid",
     "theme": "2f1c77dc3fd27bf0",
     "breakpoints": [
-      { "name": "Default", "px": 0, "cols": 3 },
-      { "name": "Tablet", "px": 576, "cols": 6 },
-      { "name": "Small Desktop", "px": 768, "cols": 9 },
-      { "name": "Desktop", "px": 1024, "cols": 12 }
+      {
+        "name": "Default",
+        "px": 0,
+        "cols": 3
+      },
+      {
+        "name": "Tablet",
+        "px": 576,
+        "cols": 6
+      },
+      {
+        "name": "Small Desktop",
+        "px": 768,
+        "cols": 9
+      },
+      {
+        "name": "Desktop",
+        "px": 1024,
+        "cols": 12
+      }
     ],
     "order": 3,
     "className": "",
@@ -44,10 +60,26 @@
     "layout": "grid",
     "theme": "2f1c77dc3fd27bf0",
     "breakpoints": [
-      { "name": "Default", "px": 0, "cols": 3 },
-      { "name": "Tablet", "px": 576, "cols": 6 },
-      { "name": "Small Desktop", "px": 768, "cols": 9 },
-      { "name": "Desktop", "px": 1024, "cols": 12 }
+      {
+        "name": "Default",
+        "px": 0,
+        "cols": 3
+      },
+      {
+        "name": "Tablet",
+        "px": 576,
+        "cols": 6
+      },
+      {
+        "name": "Small Desktop",
+        "px": 768,
+        "cols": 9
+      },
+      {
+        "name": "Desktop",
+        "px": 1024,
+        "cols": 12
+      }
     ],
     "order": 4,
     "className": "",
@@ -81,7 +113,15 @@
     "name": "Receive-only CAN reader",
     "x": 190,
     "y": 120,
-    "wires": [["bal-can-line"], [], ["bal-reader-error"]]
+    "wires": [
+      [
+        "bal-can-line"
+      ],
+      [],
+      [
+        "bal-reader-error"
+      ]
+    ]
   },
   {
     "id": "bal-battery-input",
@@ -89,8 +129,15 @@
     "z": "bal-tab",
     "service": "com.victronenergy.battery/512",
     "path": "/Dc/0/Voltage",
-    "serviceObj": { "service": "com.victronenergy.battery/512", "name": "Dyness B3" },
-    "pathObj": { "path": "/Dc/0/Voltage", "type": "float", "name": "Pack voltage" },
+    "serviceObj": {
+      "service": "com.victronenergy.battery/512",
+      "name": "Dyness B3"
+    },
+    "pathObj": {
+      "path": "/Dc/0/Voltage",
+      "type": "float",
+      "name": "Pack voltage"
+    },
     "name": "Pack voltage (read-only)",
     "onlyChanges": false,
     "roundValues": "3",
@@ -104,8 +151,15 @@
     "z": "bal-tab",
     "service": "com.victronenergy.vebus/276",
     "path": "/BatteryOperationalLimits/MaxChargeVoltage",
-    "serviceObj": { "service": "com.victronenergy.vebus/276", "name": "VE.Bus" },
-    "pathObj": { "path": "/BatteryOperationalLimits/MaxChargeVoltage", "type": "float", "name": "BMS CVL" },
+    "serviceObj": {
+      "service": "com.victronenergy.vebus/276",
+      "name": "VE.Bus"
+    },
+    "pathObj": {
+      "path": "/BatteryOperationalLimits/MaxChargeVoltage",
+      "type": "float",
+      "name": "BMS CVL"
+    },
     "name": "BMS CVL (read-only)",
     "onlyChanges": false,
     "roundValues": "3",
@@ -127,7 +181,12 @@
     "libs": [],
     "x": 450,
     "y": 120,
-    "wires": [["bal-can-log", "bal-raw-status"]]
+    "wires": [
+      [
+        "bal-can-log",
+        "bal-raw-status"
+      ]
+    ]
   },
   {
     "id": "bal-can-log",
@@ -142,7 +201,9 @@
     "encoding": "none",
     "x": 740,
     "y": 100,
-    "wires": [[]]
+    "wires": [
+      []
+    ]
   },
   {
     "id": "bal-reader-error",
@@ -188,7 +249,11 @@
     "type": "inject",
     "z": "bal-tab",
     "name": "Initial authority status",
-    "props": [{ "p": "payload" }],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "repeat": "",
     "crontab": "",
     "once": true,
@@ -198,7 +263,11 @@
     "payloadType": "str",
     "x": 180,
     "y": 260,
-    "wires": [["bal-status"]]
+    "wires": [
+      [
+        "bal-status"
+      ]
+    ]
   },
   {
     "id": "bal-status",
@@ -256,7 +325,11 @@
     "className": "",
     "x": 740,
     "y": 320,
-    "wires": [["bal-controller"]]
+    "wires": [
+      [
+        "bal-controller"
+      ]
+    ]
   },
   {
     "id": "bal-rs485-read",
@@ -271,7 +344,15 @@
     "name": "Read latest Dyness RS485 snapshot",
     "x": 180,
     "y": 520,
-    "wires": [["bal-rs485-line"], [], ["bal-reader-error"]]
+    "wires": [
+      [
+        "bal-rs485-line"
+      ],
+      [],
+      [
+        "bal-reader-error"
+      ]
+    ]
   },
   {
     "id": "bal-rs485-line",
@@ -287,7 +368,12 @@
     "libs": [],
     "x": 460,
     "y": 520,
-    "wires": [["bal-maint-store", "bal-controller"]]
+    "wires": [
+      [
+        "bal-maint-store",
+        "bal-controller"
+      ]
+    ]
   },
   {
     "id": "bal-maint-store",
@@ -310,7 +396,11 @@
     "type": "inject",
     "z": "bal-tab",
     "name": "Maintenance refresh (5 s)",
-    "props": [{ "p": "payload" }],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "repeat": "5",
     "crontab": "",
     "once": true,
@@ -320,7 +410,11 @@
     "payloadType": "str",
     "x": 180,
     "y": 700,
-    "wires": [["bal-maint-format"]]
+    "wires": [
+      [
+        "bal-maint-format"
+      ]
+    ]
   },
   {
     "id": "bal-maint-format",
@@ -336,7 +430,11 @@
     "libs": [],
     "x": 460,
     "y": 700,
-    "wires": [["bal-maintenance"]]
+    "wires": [
+      [
+        "bal-maintenance"
+      ]
+    ]
   },
   {
     "id": "bal-maintenance",
@@ -364,7 +462,11 @@
     "type": "inject",
     "z": "bal-tab",
     "name": "Shadow controller tick (2 s)",
-    "props": [{ "p": "payload" }],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "repeat": "2",
     "crontab": "",
     "once": true,
@@ -374,7 +476,11 @@
     "payloadType": "str",
     "x": 180,
     "y": 820,
-    "wires": [["bal-controller"]]
+    "wires": [
+      [
+        "bal-controller"
+      ]
+    ]
   },
   {
     "id": "bal-controller",
@@ -390,7 +496,21 @@
     "libs": [],
     "x": 730,
     "y": 820,
-    "wires": [["bal-controller-format", "bal-controls"], ["bal-command-log", "bal-events-log"], ["bal-config-snapshot"], ["bal-csv-log-control"]]
+    "wires": [
+      [
+        "bal-controller-format",
+        "bal-controls"
+      ],
+      [
+        "bal-command-log"
+      ],
+      [
+        "bal-config-snapshot"
+      ],
+      [
+        "bal-csv-log-control"
+      ]
+    ]
   },
   {
     "id": "bal-controller-format",
@@ -406,7 +526,11 @@
     "libs": [],
     "x": 990,
     "y": 780,
-    "wires": [["bal-status"]]
+    "wires": [
+      [
+        "bal-status"
+      ]
+    ]
   },
   {
     "id": "bal-command-log",
@@ -421,22 +545,9 @@
     "encoding": "none",
     "x": 1010,
     "y": 840,
-    "wires": [[]]
-  },
-  {
-    "id": "bal-events-log",
-    "type": "file",
-    "z": "bal-tab",
-    "name": "Controller events",
-    "filename": "/data/home/nodered/cerbo-balancer-events.jsonl",
-    "filenameType": "str",
-    "appendNewline": true,
-    "createDir": true,
-    "overwriteFile": "false",
-    "encoding": "none",
-    "x": 1010,
-    "y": 870,
-    "wires": [[]]
+    "wires": [
+      []
+    ]
   },
   {
     "id": "bal-csv-log-control",
@@ -451,7 +562,9 @@
     "encoding": "none",
     "x": 1010,
     "y": 910,
-    "wires": [[]]
+    "wires": [
+      []
+    ]
   },
   {
     "id": "bal-state-log",
@@ -482,7 +595,14 @@
     "libs": [],
     "x": 1010,
     "y": 940,
-    "wires": [["bal-state-persist-delay"], ["bal-config-persist-delay"]]
+    "wires": [
+      [
+        "bal-state-persist-delay"
+      ],
+      [
+        "bal-config-persist-delay"
+      ]
+    ]
   },
   {
     "id": "bal-state-persist-delay",
@@ -503,7 +623,11 @@
     "outputs": 1,
     "x": 1260,
     "y": 920,
-    "wires": [["bal-state-log"]]
+    "wires": [
+      [
+        "bal-state-log"
+      ]
+    ]
   },
   {
     "id": "bal-config-persist-delay",
@@ -524,7 +648,11 @@
     "outputs": 1,
     "x": 1260,
     "y": 960,
-    "wires": [["bal-config-log"]]
+    "wires": [
+      [
+        "bal-config-log"
+      ]
+    ]
   },
   {
     "id": "bal-config-log",
@@ -546,7 +674,11 @@
     "type": "inject",
     "z": "bal-tab",
     "name": "Restore controller state",
-    "props": [{ "p": "payload" }],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "repeat": "",
     "crontab": "",
     "once": true,
@@ -556,7 +688,11 @@
     "payloadType": "str",
     "x": 180,
     "y": 960,
-    "wires": [["bal-state-load"]]
+    "wires": [
+      [
+        "bal-state-load"
+      ]
+    ]
   },
   {
     "id": "bal-state-load",
@@ -571,7 +707,13 @@
     "name": "Read persisted controller state",
     "x": 450,
     "y": 960,
-    "wires": [["bal-state-parse"], [], []]
+    "wires": [
+      [
+        "bal-state-parse"
+      ],
+      [],
+      []
+    ]
   },
   {
     "id": "bal-state-parse",
@@ -587,14 +729,22 @@
     "libs": [],
     "x": 700,
     "y": 960,
-    "wires": [["bal-controller"]]
+    "wires": [
+      [
+        "bal-controller"
+      ]
+    ]
   },
   {
     "id": "bal-rs485-refresh",
     "type": "inject",
     "z": "bal-tab",
     "name": "Refresh latest RS485 snapshot",
-    "props": [{ "p": "payload" }],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "repeat": "2",
     "crontab": "",
     "once": true,
@@ -604,51 +754,336 @@
     "payloadType": "str",
     "x": 180,
     "y": 480,
-    "wires": [["bal-rs485-read"]]
+    "wires": [
+      [
+        "bal-rs485-read"
+      ]
+    ]
   },
   {
-    "id": "bal-logs-page", "type": "ui-page", "name": "Balancer CSV Logs", "ui": "93f5777d13b8710a", "path": "/balancer-logs", "icon": "download", "layout": "grid", "theme": "2f1c77dc3fd27bf0", "breakpoints": [{"name":"Default","px":0,"cols":3},{"name":"Tablet","px":576,"cols":6},{"name":"Small Desktop","px":768,"cols":9},{"name":"Desktop","px":1024,"cols":12}], "order": 5, "className": "", "visible": "true", "disabled": "false"
+    "id": "bal-logs-page",
+    "type": "ui-page",
+    "name": "Balancer CSV Logs",
+    "ui": "93f5777d13b8710a",
+    "path": "/balancer-logs",
+    "icon": "download",
+    "layout": "grid",
+    "theme": "2f1c77dc3fd27bf0",
+    "breakpoints": [
+      {
+        "name": "Default",
+        "px": 0,
+        "cols": 3
+      },
+      {
+        "name": "Tablet",
+        "px": 576,
+        "cols": 6
+      },
+      {
+        "name": "Small Desktop",
+        "px": 768,
+        "cols": 9
+      },
+      {
+        "name": "Desktop",
+        "px": 1024,
+        "cols": 12
+      }
+    ],
+    "order": 5,
+    "className": "",
+    "visible": "true",
+    "disabled": "false"
   },
   {
-    "id": "bal-logs-group", "type": "ui-group", "name": "CSV download library", "page": "bal-logs-page", "width": 12, "height": 10, "order": 1, "showTitle": true, "className": "", "visible": true, "disabled": false, "groupType": "default"
+    "id": "bal-logs-group",
+    "type": "ui-group",
+    "name": "CSV download library",
+    "page": "bal-logs-page",
+    "width": 12,
+    "height": 10,
+    "order": 1,
+    "showTitle": true,
+    "className": "",
+    "visible": true,
+    "disabled": false,
+    "groupType": "default"
   },
   {
-    "id": "bal-logs-refresh", "type": "inject", "z": "bal-tab", "name": "Refresh CSV log library", "props": [{"p":"payload"}], "repeat": "5", "once": true, "onceDelay": "1", "topic": "", "payload": "", "payloadType": "str", "x": 190, "y": 1020, "wires": [["bal-logs-list"]]
+    "id": "bal-logs-refresh",
+    "type": "inject",
+    "z": "bal-tab",
+    "name": "Refresh CSV log library",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "5",
+    "once": true,
+    "onceDelay": "1",
+    "topic": "",
+    "payload": "",
+    "payloadType": "str",
+    "x": 190,
+    "y": 1020,
+    "wires": [
+      [
+        "bal-logs-list"
+      ]
+    ]
   },
   {
-    "id": "bal-logs-list", "type": "exec", "z": "bal-tab", "command": "ls -ln /data/home/nodered/cerbo-balancer-csv/*.csv 2>/dev/null | awk '{name=$NF; sub(/^.*\\//,\"\",name); print name \"|\" $5 \"|\" $6 \" \" $7 \" \" $8}'", "addpay": false, "append": "", "useSpawn": "false", "timer": "", "winHide": false, "name": "List CSV logs", "x": 450, "y": 1020, "wires": [["bal-logs-format"], [], []]
+    "id": "bal-logs-list",
+    "type": "exec",
+    "z": "bal-tab",
+    "command": "ls -ln /data/home/nodered/cerbo-balancer-csv/*.csv 2>/dev/null | awk '{name=$NF; sub(/^.*\\//,\"\",name); print name \"|\" $5 \"|\" $6 \" \" $7 \" \" $8}'",
+    "addpay": false,
+    "append": "",
+    "useSpawn": "false",
+    "timer": "",
+    "winHide": false,
+    "name": "List CSV logs",
+    "x": 450,
+    "y": 1020,
+    "wires": [
+      [
+        "bal-logs-format"
+      ],
+      [],
+      []
+    ]
   },
   {
-    "id": "bal-logs-format", "type": "function", "z": "bal-tab", "name": "Format CSV log library", "func": "msg.payload = String(msg.payload || '').trim().split('\\n').filter(Boolean).map(line => { const [name,size,modified] = line.split('|'); return { name, size, modified, href: '/balancer-csv-download?name=' + encodeURIComponent(name), deleteHref: '/balancer-csv-delete?name=' + encodeURIComponent(name) }; }); return msg;", "outputs": 1, "x": 700, "y": 1020, "wires": [["bal-logs-view"]]
+    "id": "bal-logs-format",
+    "type": "function",
+    "z": "bal-tab",
+    "name": "Format CSV log library",
+    "func": "msg.payload = String(msg.payload || '').trim().split('\\n').filter(Boolean).map(line => { const [name,size,modified] = line.split('|'); return { name, size, modified, href: '/balancer-csv-download?name=' + encodeURIComponent(name), deleteHref: '/balancer-csv-delete?name=' + encodeURIComponent(name) }; }); return msg;",
+    "outputs": 1,
+    "x": 700,
+    "y": 1020,
+    "wires": [
+      [
+        "bal-logs-view"
+      ]
+    ]
   },
   {
-    "id": "bal-logs-view", "type": "ui-template", "z": "bal-tab", "group": "bal-logs-group", "page": "", "ui": "", "name": "CSV log library", "order": 1, "width": 12, "height": 10, "head": "", "format": "<template><div><p>CSV sessions stored on the Cerbo. Select a file to download or delete.</p><table><thead><tr><th>Filename</th><th>Modified</th><th>Size</th><th></th></tr></thead><tbody><tr v-for=\"f in (msg?.payload || [])\" :key=\"f.name\"><td>{{f.name}}</td><td>{{f.modified}}</td><td>{{f.size}} bytes</td><td><a :href=\"f.href\" target=\"_blank\" rel=\"noopener\" download>Download</a> <button type=\"button\" @click=\"deleteFile(f)\">Delete</button></td></tr></tbody></table><p v-if=\"!(msg?.payload || []).length\">No CSV files yet.</p></div></template><script>export default { methods: { async deleteFile (file) { if (!window.confirm(`Delete ${file.name}?`)) return; const response = await fetch(file.deleteHref, { method: 'POST' }); if (!response.ok) { window.alert('Delete failed'); return } this.send({ topic: 'refresh_csv_logs', payload: '' }) } } }</script><style>table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:7px;border-bottom:1px solid #ddd}button{margin-left:6px}</style>", "storeOutMessages": true, "passthru": false, "resendOnRefresh": true, "templateScope": "local", "className": "", "x": 970, "y": 1020, "wires": [["bal-logs-list"]]
+    "id": "bal-logs-view",
+    "type": "ui-template",
+    "z": "bal-tab",
+    "group": "bal-logs-group",
+    "page": "",
+    "ui": "",
+    "name": "CSV log library",
+    "order": 1,
+    "width": 12,
+    "height": 10,
+    "head": "",
+    "format": "<template><div><p>CSV sessions stored on the Cerbo. Select a file to download or delete.</p><table><thead><tr><th>Filename</th><th>Modified</th><th>Size</th><th></th></tr></thead><tbody><tr v-for=\"f in (msg?.payload || [])\" :key=\"f.name\"><td>{{f.name}}</td><td>{{f.modified}}</td><td>{{f.size}} bytes</td><td><a :href=\"f.href\" target=\"_blank\" rel=\"noopener\" download>Download</a> <button type=\"button\" @click=\"deleteFile(f)\">Delete</button></td></tr></tbody></table><p v-if=\"!(msg?.payload || []).length\">No CSV files yet.</p></div></template><script>export default { methods: { async deleteFile (file) { if (!window.confirm(`Delete ${file.name}?`)) return; const response = await fetch(file.deleteHref, { method: 'POST' }); if (!response.ok) { window.alert('Delete failed'); return } this.send({ topic: 'refresh_csv_logs', payload: '' }) } } }</script><style>table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:7px;border-bottom:1px solid #ddd}button{margin-left:6px}</style>",
+    "storeOutMessages": true,
+    "passthru": false,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "className": "",
+    "x": 970,
+    "y": 1020,
+    "wires": [
+      [
+        "bal-logs-list"
+      ]
+    ]
   },
   {
-    "id": "bal-csv-download", "type": "http in", "z": "bal-tab", "name": "CSV download", "url": "/balancer-csv-download", "method": "get", "upload": false, "swaggerDoc": "", "x": 190, "y": 1080, "wires": [["bal-csv-download-path"]]
+    "id": "bal-csv-download",
+    "type": "http in",
+    "z": "bal-tab",
+    "name": "CSV download",
+    "url": "/balancer-csv-download",
+    "method": "get",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 190,
+    "y": 1080,
+    "wires": [
+      [
+        "bal-csv-download-path"
+      ]
+    ]
   },
   {
-    "id": "bal-csv-download-path", "type": "function", "z": "bal-tab", "name": "Validate CSV download path", "func": "const name = msg.req?.query?.name; if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,80}\\.csv$/.test(name)) { msg.statusCode=400; msg.payload='Invalid CSV filename'; return [null,msg]; } msg.filename='/data/home/nodered/cerbo-balancer-csv/'+name; msg.headers={'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename=\"'+name+'\"'}; return [msg,null];", "outputs": 2, "x": 460, "y": 1080, "wires": [["bal-csv-download-file"], ["bal-csv-download-response"]]
+    "id": "bal-csv-download-path",
+    "type": "function",
+    "z": "bal-tab",
+    "name": "Validate CSV download path",
+    "func": "const name = msg.req?.query?.name; if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,80}\\.csv$/.test(name)) { msg.statusCode=400; msg.payload='Invalid CSV filename'; return [null,msg]; } msg.filename='/data/home/nodered/cerbo-balancer-csv/'+name; msg.headers={'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename=\"'+name+'\"'}; return [msg,null];",
+    "outputs": 2,
+    "x": 460,
+    "y": 1080,
+    "wires": [
+      [
+        "bal-csv-download-file"
+      ],
+      [
+        "bal-csv-download-response"
+      ]
+    ]
   },
   {
-    "id": "bal-csv-download-file", "type": "file in", "z": "bal-tab", "name": "Read CSV download", "filename": "filename", "filenameType": "msg", "format": "", "chunk": false, "sendError": true, "encoding": "none", "allProps": false, "x": 700, "y": 1080, "wires": [["bal-csv-download-response"]]
+    "id": "bal-csv-download-file",
+    "type": "file in",
+    "z": "bal-tab",
+    "name": "Read CSV download",
+    "filename": "filename",
+    "filenameType": "msg",
+    "format": "",
+    "chunk": false,
+    "sendError": true,
+    "encoding": "none",
+    "allProps": false,
+    "x": 700,
+    "y": 1080,
+    "wires": [
+      [
+        "bal-csv-download-response"
+      ]
+    ]
   },
   {
-    "id": "bal-csv-download-response", "type": "http response", "z": "bal-tab", "name": "Send CSV download", "statusCode": "", "headers": {}, "x": 970, "y": 1080, "wires": []
+    "id": "bal-csv-download-response",
+    "type": "http response",
+    "z": "bal-tab",
+    "name": "Send CSV download",
+    "statusCode": "",
+    "headers": {},
+    "x": 970,
+    "y": 1080,
+    "wires": []
   },
   {
-    "id": "bal-csv-delete", "type": "http in", "z": "bal-tab", "name": "CSV delete", "url": "/balancer-csv-delete", "method": "post", "upload": false, "swaggerDoc": "", "x": 190, "y": 1140, "wires": [["bal-csv-delete-path"]]
+    "id": "bal-csv-delete",
+    "type": "http in",
+    "z": "bal-tab",
+    "name": "CSV delete",
+    "url": "/balancer-csv-delete",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 190,
+    "y": 1140,
+    "wires": [
+      [
+        "bal-csv-delete-path"
+      ]
+    ]
   },
   {
-    "id": "bal-csv-delete-path", "type": "function", "z": "bal-tab", "name": "Validate CSV delete path", "func": "const name = msg.req?.query?.name; if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,80}\\.csv$/.test(name)) { msg.statusCode=400; msg.headers={'Content-Type':'text/plain; charset=utf-8'}; msg.payload='Invalid CSV filename'; return [null,msg]; } msg.filename='/data/home/nodered/cerbo-balancer-csv/'+name; return [msg,null];", "outputs": 2, "x": 460, "y": 1140, "wires": [["bal-csv-delete-file"], ["bal-csv-delete-http-response"]]
+    "id": "bal-csv-delete-path",
+    "type": "function",
+    "z": "bal-tab",
+    "name": "Validate CSV delete path",
+    "func": "const name = msg.req?.query?.name; if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,80}\\.csv$/.test(name)) { msg.statusCode=400; msg.headers={'Content-Type':'text/plain; charset=utf-8'}; msg.payload='Invalid CSV filename'; return [null,msg]; } msg.filename='/data/home/nodered/cerbo-balancer-csv/'+name; return [msg,null];",
+    "outputs": 2,
+    "x": 460,
+    "y": 1140,
+    "wires": [
+      [
+        "bal-csv-delete-file"
+      ],
+      [
+        "bal-csv-delete-http-response"
+      ]
+    ]
   },
   {
-    "id": "bal-csv-delete-file", "type": "file", "z": "bal-tab", "name": "Delete CSV file", "filename": "filename", "filenameType": "msg", "appendNewline": false, "createDir": false, "overwriteFile": "delete", "encoding": "none", "x": 700, "y": 1140, "wires": [["bal-csv-delete-response"]]
+    "id": "bal-csv-delete-file",
+    "type": "file",
+    "z": "bal-tab",
+    "name": "Delete CSV file",
+    "filename": "filename",
+    "filenameType": "msg",
+    "appendNewline": false,
+    "createDir": false,
+    "overwriteFile": "delete",
+    "encoding": "none",
+    "x": 700,
+    "y": 1140,
+    "wires": [
+      [
+        "bal-csv-delete-response"
+      ]
+    ]
   },
   {
-    "id": "bal-csv-delete-response", "type": "function", "z": "bal-tab", "name": "Send CSV delete result", "func": "msg.statusCode = 200; msg.headers = {'Content-Type':'application/json; charset=utf-8'}; msg.payload = JSON.stringify({ deleted: true }); return msg;", "outputs": 1, "x": 970, "y": 1140, "wires": [["bal-csv-delete-http-response"]]
+    "id": "bal-csv-delete-response",
+    "type": "function",
+    "z": "bal-tab",
+    "name": "Send CSV delete result",
+    "func": "msg.statusCode = 200; msg.headers = {'Content-Type':'application/json; charset=utf-8'}; msg.payload = JSON.stringify({ deleted: true }); return msg;",
+    "outputs": 1,
+    "x": 970,
+    "y": 1140,
+    "wires": [
+      [
+        "bal-csv-delete-http-response"
+      ]
+    ]
   },
   {
-    "id": "bal-csv-delete-http-response", "type": "http response", "z": "bal-tab", "name": "CSV delete response", "statusCode": "", "headers": {}, "x": 1220, "y": 1140, "wires": []
+    "id": "bal-csv-delete-http-response",
+    "type": "http response",
+    "z": "bal-tab",
+    "name": "CSV delete response",
+    "statusCode": "",
+    "headers": {},
+    "x": 1220,
+    "y": 1140,
+    "wires": []
+  },
+  {
+    "id": "bal-runtime-cap-refresh",
+    "type": "inject",
+    "z": "bal-tab",
+    "name": "Cap runtime persistence",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "86400",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "5",
+    "topic": "",
+    "payload": "",
+    "payloadType": "str",
+    "x": 190,
+    "y": 1200,
+    "wires": [
+      [
+        "bal-runtime-cap"
+      ]
+    ]
+  },
+  {
+    "id": "bal-runtime-cap",
+    "type": "exec",
+    "z": "bal-tab",
+    "command": "sh /data/home/nodered/cerbo-balancer/cap_runtime_files.sh",
+    "addpay": false,
+    "append": "",
+    "useSpawn": "false",
+    "timer": "30",
+    "winHide": false,
+    "name": "Compact bounded runtime files",
+    "x": 480,
+    "y": 1200,
+    "wires": [
+      [],
+      [],
+      []
+    ]
   }
 ]
