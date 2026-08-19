@@ -1,0 +1,31 @@
+# Dyness PowerBrick PRO Balancer
+
+Canonical page: https://elokfu.github.io/cerbo-balancer/
+Repository: https://github.com/elokfu/cerbo-balancer
+
+## Summary
+
+Open engineering implementation for three parallel Dyness PowerBrick PRO
+batteries on Victron Cerbo GX. It provides read-only 115200 8N1 RS485
+telemetry, per-battery balancing control, filtered Cell 16 reconstruction,
+capacity-based per-battery SOC, centered dynamic-float voltage, and a persistent
+D-Bus guardian at DeviceInstance 101.
+
+## Key facts
+
+- PowerBrick PRO DIP: 00110, Victron and others, 115200 baud.
+- Balance entry: spread strictly above 30 mV for eight unique samples.
+- Selected pack current target: 2.0 A.
+- Dynamic float: four samples before, crossing sample, four samples after.
+- Default editable crossing: 3.500 V/cell.
+- Guardian fallback: 54.0 V CVL, 20.0 A CCL, 100.0 A DCL.
+- RS485 is read-only; Dyness physical protection remains authoritative.
+
+## Documents
+
+- Complete PDF: https://elokfu.github.io/cerbo-balancer/assets/dyness-balancer-algorithm-reference-with-toc.pdf
+- Source manual: https://elokfu.github.io/cerbo-balancer/dyness-balancer-implementation.md
+- RS485 service: https://elokfu.github.io/cerbo-balancer/rs485-service.md
+
+Normal-mode SOC CCL defaults: 15 A/battery at 97%, 6 A/battery at 98%, and 3 A/battery at >=99%. Multiply by unique confirmed battery inventory; bypass during balancing.
+Dynamic-float cell trigger default: 3.450 V/cell, editable from the controller page.

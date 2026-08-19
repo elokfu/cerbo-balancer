@@ -16,10 +16,13 @@ const BALANCE_EXIT_CURRENT_THRESHOLD = 1.5
 
 const DEFAULT_CONFIG = Object.freeze({
   perBatteryCapacitySocControlEnabled: true,
+  soc97CurrentPerBattery: 15,
+  soc98CurrentPerBattery: 6,
+  soc99CurrentPerBattery: 3,
   balancingVoltageCeiling: 56.5,
   safetyFallbackVoltage: 55.0,
   safetyFallbackCurrent: 10.0,
-  floatCellVoltageThreshold: 3.5,
+  floatCellVoltageThreshold: 3.45,
   balancerSpreadThreshold: 0.030,
   balanceBatteryCurrentTarget: 2.0,
   currentTargetTolerance: 0.25,
@@ -96,7 +99,8 @@ function validateConfig (candidate = {}) {
   const errors = []
   const positive = [
     'balancingVoltageCeiling', 'safetyFallbackVoltage',
-    'safetyFallbackCurrent', 'floatCellVoltageThreshold', 'balancerSpreadThreshold', 'balanceBatteryCurrentTarget',
+    'safetyFallbackCurrent', 'floatCellVoltageThreshold', 'soc97CurrentPerBattery',
+    'soc98CurrentPerBattery', 'soc99CurrentPerBattery', 'balancerSpreadThreshold', 'balanceBatteryCurrentTarget',
     'currentTargetTolerance', 'feedForwardAlpha', 'shareMinimumSelectedCurrent',
     'shareMinimumTotalCurrent', 'feedForwardFallbackCurrent', 'kp', 'ki',
     'maxIntegralTerm', 'aggregateCurrentMaximum', 'currentIncreaseRatePerMin',
@@ -105,6 +109,9 @@ function validateConfig (candidate = {}) {
   ]
   for (const field of positive) {
     if (!finite(config[field]) || config[field] <= 0) errors.push(`${field} must be positive`)
+  }
+  for (const field of ['soc97CurrentPerBattery', 'soc98CurrentPerBattery', 'soc99CurrentPerBattery']) {
+    if (finite(config[field]) && config[field] > 100) errors.push(`${field} must not exceed 100 A/battery`)
   }
   if (!finite(config.aggregateCurrentMinimum) || config.aggregateCurrentMinimum < 0) {
     errors.push('aggregateCurrentMinimum must be non-negative')
@@ -308,10 +315,16 @@ function createBalancerController (options = {}) {
   }
   function socCurrentCap () {
     const soc = masterSoc()
-    if (soc === 97) return 50
-    if (soc === 98) return 20
-    if (soc >= 99) return 10
-    return null
+    let perBattery = null
+    if (soc === 97) perBattery = config.soc97CurrentPerBattery
+    else if (soc === 98) perBattery = config.soc98CurrentPerBattery
+    else if (soc >= 99) perBattery = config.soc99CurrentPerBattery
+    const batteryCount = new Set(expectedAddresses()).size
+    return {
+      perBattery,
+      batteryCount,
+      aggregate: finite(perBattery) && batteryCount > 0 ? perBattery * batteryCount : null
+    }
   }
   function normalCurrentPolicy () {
     const settings = chargeControlSettings()
@@ -319,10 +332,16 @@ function createBalancerController (options = {}) {
     if (finite(limits().chargeCurrent)) candidates.push({ source: 'BMS_CCL', value: Math.max(0, limits().chargeCurrent) })
     if (settings.currentLimitEnabled === true && finite(settings.maxChargeCurrent)) candidates.push({ source: 'CERBO_UI_CCL', value: Math.max(0, settings.maxChargeCurrent) })
     const cap = socCurrentCap()
-    if (finite(cap)) candidates.push({ source: 'SOC_DERATING', value: cap })
+    if (finite(cap.aggregate)) candidates.push({ source: 'SOC_DERATING', value: cap.aggregate })
     if (!candidates.length) candidates.push({ source: 'SAFETY_FALLBACK', value: config.safetyFallbackCurrent })
     const limiting = candidates.reduce((lowest, candidate) => candidate.value < lowest.value ? candidate : lowest)
-    return { value: limiting.value, source: limiting.source, socCap: cap }
+    return {
+      value: limiting.value,
+      source: limiting.source,
+      socCapPerBattery: cap.perBattery,
+      batteryCount: cap.batteryCount,
+      socCap: cap.aggregate
+    }
   }
   function normalChargeCurrent () { return normalCurrentPolicy().value }
   function floatCvlActive () { return state.completionLatched && masterSoc() === 100 }

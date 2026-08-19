@@ -3,6 +3,15 @@
 `scripts/dyness_rs485_service.py` polls the stable FTDI path at 115200 8N1.
 It discovers Dyness/Pylon addresses 2–16 and sends only read requests:
 
+## PowerBrick PRO communication DIP switch
+
+Set the five PowerBrick PRO communication DIP switches to `00110`, read in
+the order printed on the battery. This selects the **Victron and others**
+profile at **115200 baud**. The deployed serial format is 115200 8N1.
+
+Confirm switch numbering and ON/OFF orientation against the label on the
+specific battery revision.
+
 - CID2 `0x42`: per-battery cells, temperatures, current, and voltage.
 - CID2 `0x61`: master system summary, including system current, SOC, cell
   summary, and cell/MOSFET/BMS temperatures. Only the master battery at

@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dyness PowerBrick PRO Balancer for Victron Cerbo GX</title>
+  <meta name="description" content="A power-safe Dyness PowerBrick PRO balancing controller for Victron Cerbo GX with per-battery RS485 telemetry, centered dynamic-float voltage, Cell 16 reconstruction, and a persistent D-Bus guardian.">
+  <meta name="keywords" content="Dyness PowerBrick PRO, Victron Cerbo GX, Dyness balancer, LiFePO4 balancing, dynamic float voltage, DVCC, RS485, battery lifetime, cell balancing, BMS guardian">
+  <meta name="author" content="Heiko Gerdes">
+  <meta name="theme-color" content="#12372a">
+  <link rel="canonical" href="https://elokfu.github.io/cerbo-balancer/">
+  <link rel="stylesheet" href="styles.css">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Balance high. Float low. Protect continuity.">
+  <meta property="og:description" content="Open engineering implementation for Dyness PowerBrick PRO balancing and reduced float-voltage stress on Victron Cerbo GX.">
+  <meta property="og:url" content="https://elokfu.github.io/cerbo-balancer/">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="citation_title" content="Dyness PowerBrick PRO Balancer and Power-Safe BMS Guardian">
+  <meta name="citation_author" content="Heiko Gerdes">
+  <meta name="citation_publication_date" content="2026-08-19">
+  <meta name="citation_pdf_url" content="https://elokfu.github.io/cerbo-balancer/assets/dyness-balancer-algorithm-reference-with-toc.pdf">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Dyness PowerBrick PRO Balancer and Power-Safe BMS Guardian",
+    "description": "An engineering implementation for per-battery balancing, dynamic float-voltage reduction, RS485 telemetry, and power-safe Victron D-Bus fallback.",
+    "author": {"@type": "Person", "name": "Heiko Gerdes"},
+    "datePublished": "2026-08-19",
+    "dateModified": "2026-08-19",
+    "url": "https://elokfu.github.io/cerbo-balancer/",
+    "mainEntityOfPage": "https://elokfu.github.io/cerbo-balancer/",
+    "about": ["Dyness PowerBrick PRO", "Victron Cerbo GX", "LiFePO4 balancing", "Dynamic float voltage"]
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "How are normal-mode SOC charge-current limits calculated?",
+        "acceptedAnswer": {"@type": "Answer", "text": "Editable defaults of 15 A per battery at 97%, 6 A per battery at 98%, and 3 A per battery at 99% or above are multiplied by the unique confirmed battery inventory. For three batteries the aggregate limits are 45 A, 18 A, and 9 A. Balancing bypasses these SOC caps, and lower BMS or Cerbo UI limits still win."}
+      },
+      {
+        "@type": "Question",
+        "name": "Why balance parallel Dyness PowerBrick PRO batteries?",
+        "acceptedAnswer": {"@type": "Answer", "text": "Differences between cells and parallel packs can make the highest cell reach the BMS limit before the rest of the system is full. Controlled balancing can reduce spread, avoid premature charge limiting, improve usable capacity, and reduce repeated high-cell protection events."}
+      },
+      {
+        "@type": "Question",
+        "name": "How can a reduced float voltage support LiFePO4 lifetime?",
+        "acceptedAnswer": {"@type": "Answer", "text": "After balancing is complete, the controller can use a learned pack voltage centered on the first configured high-cell crossing (3.450 V/cell by default) instead of holding an unnecessarily high fixed voltage. Reducing time spent at elevated cell voltage can reduce voltage-related calendar-aging stress, although no specific lifetime extension is guaranteed."}
+      },
+      {
+        "@type": "Question",
+        "name": "Does the controller bypass Dyness BMS protection?",
+        "acceptedAnswer": {"@type": "Answer", "text": "No. Dyness CVL, CCL, DCL, permission bits, MOSFET states, and physical protection remain authoritative. The controller only requests values that are independently reduced by those limits."}
+      },
+      {
+        "@type": "Question",
+        "name": "What happens if RS485 communication fails?",
+        "acceptedAnswer": {"@type": "Answer", "text": "A separate persistent D-Bus guardian remains selected and publishes a fixed 54.0 V CVL, 20.0 A CCL, and 100.0 A DCL fallback while retaining the last valid SOC. It returns to normal only after two complete fresh samples."}
+      },
+      {
+        "@type": "Question",
+        "name": "What DIP switch setting is used on Dyness PowerBrick PRO?",
+        "acceptedAnswer": {"@type": "Answer", "text": "The documented five-position setting is 00110, read in the order printed on the battery. It selects the Victron and others profile at 115200 baud. Verify switch numbering and orientation on the battery label."}
+      },
+      {
+        "@type": "Question",
+        "name": "How is Cell 16 calculated when it is not directly reported?",
+        "acceptedAnswer": {"@type": "Answer", "text": "Cell 16 is estimated independently for each battery as a filtered offset from the trimmed common movement of cells 1 through 15. The same battery pack voltage slowly corrects the estimate, and fresh CID2 0x61 global extrema provide final bounds."}
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="Dyness Balancer home">
+      <span class="brand-mark">D<span>B</span></span>
+      <span>Dyness Balancer<br><small>Cerbo GX engineering project</small></span>
+    </a>
+    <nav aria-label="Primary navigation">
+      <a href="#advantages">Advantages</a>
+      <a href="#algorithm">Algorithm</a>
+      <a href="#safety">Safety</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <div class="hero-copy reveal">
+        <p class="eyebrow">Open implementation for Dyness + Victron</p>
+        <h1>Balance high.<br><em>Float low.</em><br>Protect continuity.</h1>
+        <p class="hero-lead">A per-battery balancing controller that targets the pack needing attention, then lowers voltage stress with a learned dynamic float - while a separate guardian keeps the Victron BMS service alive through restarts and communication failures.</p>
+        <div class="actions">
+          <a class="button primary" href="assets/dyness-balancer-algorithm-reference-with-toc.pdf">Download complete engineering PDF</a>
+          <a class="button secondary" href="https://github.com/elokfu/cerbo-balancer">View source on GitHub</a>
+        </div>
+        <p class="micro">Read-only battery protocol. No Dyness write commands. Physical BMS protection remains authoritative.</p>
+      </div>
+      <div class="hero-visual reveal delay-1" aria-label="Control concept diagram">
+        <div class="voltage-plot">
+          <div class="plot-label top">high-cell threshold</div>
+          <div class="trace conventional"></div>
+          <div class="trace adaptive"></div>
+          <div class="crossing"><span>3.500 V/cell crossing</span></div>
+          <div class="plot-note old">fixed high voltage</div>
+          <div class="plot-note new">learned lower float</div>
+        </div>
+        <div class="metric-strip">
+          <div><strong>4+1+4</strong><span>centered samples</span></div>
+          <div><strong>2.0 A</strong><span>selected-pack target</span></div>
+          <div><strong>54/20/100</strong><span>guardian fallback</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="proof-bar" aria-label="Implementation facts">
+      <span>PowerBrick PRO DIP <b>00110</b></span>
+      <span>RS485 <b>115200 8N1</b></span>
+      <span>Guardian <b>DeviceInstance 101</b></span>
+      <span>Controller freshness <b>20 seconds</b></span>
+    </section>
+
+    <section class="section split" id="advantages">
+      <div>
+        <p class="eyebrow">Why balancing matters</p>
+        <h2>The highest cell decides when charging must slow down.</h2>
+      </div>
+      <div class="prose">
+        <p>In a parallel battery bank, average pack voltage can look normal while one cell reaches the upper limit early. That cell can force CCL reduction, interrupt charging, and leave capacity unused in every other cell and pack.</p>
+        <p>This controller watches each battery independently. It qualifies spread over eight unique samples, selects one pack deterministically, and adjusts aggregate charge allowance until the selected pack receives approximately 2 A - the condition used to support the battery's own passive balancing behavior.</p>
+      </div>
+    </section>
+
+    <section class="benefit-grid">
+      <article class="benefit reveal">
+        <span class="number">01</span>
+        <h3>Recover usable headroom</h3>
+        <p>Reducing cell spread can delay the moment when the highest cell reaches the BMS charge limit, allowing the bank to approach full charge more uniformly.</p>
+      </article>
+      <article class="benefit reveal delay-1">
+        <span class="number">02</span>
+        <h3>Reduce protection cycling</h3>
+        <p>Qualified entry and exit rules avoid reacting to one noisy sample while addressing persistent imbalance before repeated high-cell events dominate charging.</p>
+      </article>
+      <article class="benefit reveal delay-2">
+        <span class="number">03</span>
+        <h3>Lower top-of-charge stress</h3>
+        <p>Once balancing is complete, the learned float can reduce unnecessary time at elevated cell voltage, a recognized contributor to LiFePO4 calendar-aging stress.</p>
+      </article>
+    </section>
+
+    <section class="section float-story">
+      <div class="float-copy">
+        <p class="eyebrow">Dynamic float voltage</p>
+        <h2>Learn the pack at the crossing. Do not hold it higher than necessary.</h2>
+        <p>The system buffers four pack-voltage samples before the first configurable Vmax crossing, includes the crossing sample, and captures four qualifying samples afterward.</p>
+        <div class="formula">V<sub>float</sub> = (1 / 9) &middot; &Sigma; V<sub>pack</sub>[k], &nbsp; k = -4 ... +4</div>
+        <p>After full-SOC balancing completion, the learned value becomes a CVL candidate. The final voltage remains the lowest of the learned float, Dyness CVL, enabled Cerbo UI CVL, and the 56.5 V hard ceiling.</p>
+        <p class="caution"><b>Lifetime claim boundary:</b> lower top-of-charge voltage can reduce voltage-related aging stress, but actual service life also depends on temperature, depth of discharge, current, storage SOC, cell quality, and operating time. This project does not claim a quantified lifetime extension.</p>
+      </div>
+      <div class="sample-window" aria-label="Nine-sample centered float window">
+        <div class="sample before">-4</div><div class="sample before">-3</div><div class="sample before">-2</div><div class="sample before">-1</div>
+        <div class="sample center">0<span>crossing</span></div>
+        <div class="sample after">+1</div><div class="sample after">+2</div><div class="sample after">+3</div><div class="sample after">+4</div>
+        <p>Four below-trigger samples establish context. Four post-trigger samples complete the centered mean.</p>
+      </div>
+    </section>
+
+    <section class="section algorithm-section" id="algorithm">
+      <p class="eyebrow">Implementation, not a black box</p>
+      <h2>Every layer has one job and one authority.</h2>
+      <div class="architecture">
+        <article><b>01</b><h3>RS485 truth</h3><p>CID2 0x42 supplies addressed cells, current, voltage, and capacity. CID2 0x44 supplies status. Master 0x61 and 0x63 supply system SOC, extrema, limits, and permissions.</p></article>
+        <article><b>02</b><h3>Cell 16 estimator</h3><p>A trimmed common voltage plus per-battery filtered offset removes pack-quantization stair steps. Correctly decoded global extrema remain final physical bounds.</p></article>
+        <article><b>03</b><h3>Qualified control</h3><p>Eight samples qualify entry and low-spread exit. Feed-forward estimates parallel current share; a slow PI corrects selected-pack current without assuming equal sharing.</p></article>
+        <article><b>04</b><h3>Guardian continuity</h3><p>Instance 101 remains selected while the worker restarts. Missing or stale telemetry produces a persistent, charge-capable 54 V / 20 A / 100 A fallback.</p></article>
+      </div>
+    </section>
+
+    <section class="comparison">
+      <div class="comparison-head">
+        <p class="eyebrow">Control philosophy</p>
+        <h2>Conservative by construction.</h2>
+      </div>
+      <div class="comparison-table" role="table" aria-label="Conventional and implemented behavior">
+        <div class="row header" role="row"><span>Situation</span><span>Generic behavior</span><span>This implementation</span></div>
+        <div class="row" role="row"><span>One high cell</span><span>Pack average can hide it</span><span>Per-battery effective 16-cell vector</span></div>
+        <div class="row" role="row"><span>Noisy pack voltage</span><span>Cell 16 jumps with subtraction</span><span>Trimmed-offset estimator with global bounds</span></div>
+        <div class="row" role="row"><span>Near full charge</span><span>Fixed high CVL may remain</span><span>Centered learned float after completion</span></div>
+        <div class="row" role="row"><span>Worker deployment</span><span>Selected BMS can disappear</span><span>Independent guardian remains selected</span></div>
+        <div class="row" role="row"><span>RS485 failure</span><span>Undefined or zero allowance risk</span><span>Fixed 54 V / 20 A / 100 A fallback</span></div>
+      </div>
+    </section>
+
+    <section class="section safety" id="safety">
+      <div>
+        <p class="eyebrow">Power-safe architecture</p>
+        <h2>The controller may restart. The selected BMS must remain.</h2>
+        <p>The worker, guardian, and Node-RED run independently. Routine deployments restart only the component that changed. The guardian preserves the D-Bus identity, last valid SOC, fallback limits, and live VE.Bus measurements when available.</p>
+      </div>
+      <div class="state-stack">
+        <div><b>NORMAL</b><span>Fresh complete telemetry</span></div>
+        <div><b>FALLBACK</b><span>54.0 V / 20.0 A / 100.0 A</span></div>
+        <div><b>RECOVERY</b><span>Two unique valid samples required</span></div>
+      </div>
+    </section>
+
+    <section class="technical-cta">
+      <div>
+        <p class="eyebrow">Full engineering disclosure</p>
+        <h2>Read the algorithms, equations, limits, deployment, and rollback procedures.</h2>
+      </div>
+      <a class="button light" href="assets/dyness-balancer-algorithm-reference-with-toc.pdf">Open the 12-page implementation PDF</a>
+    </section>
+
+    <section class="faq" id="faq">
+      <p class="eyebrow">Frequently asked questions</p>
+      <h2>Dyness balancing and dynamic float, answered.</h2>
+      <div class="faq-list">
+        <details>
+          <summary>How are normal-mode SOC charge-current limits calculated?</summary>
+          <p>The editable defaults are 15 A per battery at 97%, 6 A per battery at 98%, and 3 A per battery at 99% or above. The controller multiplies the selected value by the unique confirmed battery inventory, so three batteries produce aggregate limits of 45 A, 18 A, and 9 A. These caps are bypassed during balancing, and lower Dyness BMS or Cerbo UI limits remain authoritative.</p>
+        </details>
+        <details>
+          <summary>Why balance parallel Dyness PowerBrick PRO batteries?</summary>
+          <p>Cell and pack differences can make the highest cell reach the BMS limit before the rest of the bank is full. Controlled balancing can reduce spread, avoid premature charge limiting, improve usable capacity, and reduce repeated high-cell protection events.</p>
+        </details>
+        <details>
+          <summary>How does the controller decide when to balance?</summary>
+          <p>Each battery needs eight consecutive unique valid samples with spread strictly above 30 mV, charge MOSFET ON, protection clear, and valid independent capacity SOC. Exactly 30 mV does not qualify. Qualified packs are selected in deterministic address order.</p>
+        </details>
+        <details>
+          <summary>How can a reduced float voltage support LiFePO4 lifetime?</summary>
+          <p>After balancing, holding a battery near the top-of-charge voltage longer than necessary can add voltage-related calendar-aging stress. The learned float follows the actual pack voltage around the configured high-cell crossing. It can reduce that exposure, but no fixed lifetime extension is promised.</p>
+        </details>
+        <details>
+          <summary>When is the learned float voltage applied?</summary>
+          <p>Only after full-SOC balancing completion while master CID2 0x61 SOC is 100%. It remains a candidate, not an override: Dyness CVL, enabled Cerbo UI CVL, and the 56.5 V hard ceiling can only reduce it. SOC at or below 98% clears the learned value.</p>
+        </details>
+        <details>
+          <summary>Is the 3.500 V/cell float trigger editable?</summary>
+          <p>Yes. The management page accepts 3.000 through 3.650 V/cell, with 3.500 V as the default. Changing it discards the old learned float so samples from two thresholds cannot be mixed.</p>
+        </details>
+        <details>
+          <summary>How is Cell 16 calculated?</summary>
+          <p>Cells 1-15 form a trimmed common voltage. The same battery's pack-voltage subtraction provides a noisy relative observation, filtered independently per address. Fresh CID2 0x61 global extrema bound the result; an extremum is assigned exactly only when both its battery and cell ID identify Cell 16.</p>
+        </details>
+        <details>
+          <summary>Which telemetry provides per-battery SOC?</summary>
+          <p>The per-battery integer and interpolated SOC come from verified extended 24-bit capacity fields in CID2 0x42. CID2 0x44 is status-only. Master CID2 0x61 remains authoritative for system SOC, guardian SOC, DVCC, and global charge derating.</p>
+        </details>
+        <details>
+          <summary>What happens if RS485 communication fails?</summary>
+          <p>The persistent guardian remains connected and advertises 54.0 V CVL, 20.0 A CCL, and 100.0 A DCL with charge and discharge enabled. It retains the last valid SOC and waits for two complete fresh worker samples before returning to NORMAL.</p>
+        </details>
+        <details>
+          <summary>Does this bypass Dyness protection or send battery commands?</summary>
+          <p>No. RS485 operation is read-only. Dyness limits, permission bits, MOSFET states, and physical protection remain authoritative. The project does not transmit undocumented battery control commands.</p>
+        </details>
+        <details>
+          <summary>What DIP switch setting and baud rate are required?</summary>
+          <p>The documented PowerBrick PRO setting is 00110, read in the order printed on the battery. It selects the Victron and others profile at 115200 baud, 8N1. Always verify switch numbering and orientation on the battery label.</p>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div><b>Dyness Balancer</b><p>Independent engineering implementation by Heiko Gerdes.</p></div>
+    <div class="footer-links">
+      <a href="dyness-balancer-implementation.md">Read the source manual</a>
+      <a href="rs485-service.md">RS485 service details</a>
+      <a href="https://github.com/elokfu/cerbo-balancer">GitHub repository</a>
+    </div>
+    <p class="legal">Dyness and Victron are trademarks of their respective owners. This independent project is not a manufacturer specification or warranty statement.</p>
+  </footer>
+</body>
+</html>
